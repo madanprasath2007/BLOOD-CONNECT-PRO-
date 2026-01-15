@@ -1,4 +1,4 @@
-import { Donor, BloodBank, AuthenticatedUser, UserRole, BloodType } from './types';
+import { Donor, BloodBank, AuthenticatedUser, UserRole, BloodType, EmergencyRequest } from './types';
 import { MOCK_DONORS, MOCK_BANKS } from '../constants';
 import { broadcastToNetwork } from './networkService';
 
@@ -8,10 +8,6 @@ const DB_KEYS = {
   HOSPITALS: 'redconnect_hospital_db',
   REQUESTS: 'redconnect_request_db',
   OTP_STORE: 'redconnect_otp_relay'
-};
-
-const DEFAULT_INVENTORY: Record<BloodType, number> = {
-  'A+': 0, 'A-': 0, 'B+': 0, 'B-': 0, 'AB+': 0, 'AB-': 0, 'O+': 0, 'O-': 0
 };
 
 class BackendService {
@@ -87,11 +83,11 @@ class BackendService {
     return this.getInstitutions(type).find(i => i.id === id);
   }
 
-  getEmergencyRequests(): any[] {
+  getEmergencyRequests(): EmergencyRequest[] {
     return JSON.parse(localStorage.getItem(DB_KEYS.REQUESTS) || '[]');
   }
 
-  saveEmergencyRequest(request: any) {
+  saveEmergencyRequest(request: EmergencyRequest) {
     const requests = this.getEmergencyRequests();
     const updated = [request, ...requests];
     localStorage.setItem(DB_KEYS.REQUESTS, JSON.stringify(updated));

@@ -1,24 +1,17 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Droplet, LayoutDashboard, Bell, LogOut, PlusSquare, Database, Users, MapPin, 
+  Droplet, LayoutDashboard, Bell, LogOut, PlusSquare, Database, Users, 
   CalendarDays, Stethoscope, Trophy, Radar, Globe, Palette, Zap
 } from 'lucide-react';
 import EmergencyFeed from './components/EmergencyFeed';
-import InventorySync from './components/InventorySync';
 import BloodDriveList from './components/BloodDriveList';
 import NearbyScanner from './components/NearbyScanner';
 import AIAssistant from './components/AIAssistant';
 import LoginPage from './components/LoginPage';
 import HospitalRequestForm from './components/HospitalRequestForm';
-import DonorRegistrationForm from './components/DonorRegistrationForm';
 import StockManagement from './components/StockManagement';
 import DonorDatabase from './components/DonorDatabase';
 import ChatBot from './components/ChatBot';
-import DonationSchedule from './components/DonationSchedule';
-import EligibilityChecker from './components/EligibilityChecker';
-import Leaderboard from './components/Leaderboard';
-import CampaignGenerator from './components/CampaignGenerator';
-// Added BloodType to imports to fix type error in StockManagement props
 import { EmergencyRequest, AuthenticatedUser, BloodType } from './services/types';
 import { getCurrentPosition, GeoCoords } from './services/locationService';
 import { subscribeToNetwork, NetworkEvent } from './services/networkService';
@@ -75,7 +68,13 @@ const App: React.FC = () => {
   useEffect(() => {
     getCurrentPosition().then(setUserLocation).catch(() => setUserLocation({ latitude: 28.6139, longitude: 77.2090 }));
     const saved = localStorage.getItem('redconnect_user');
-    if (saved) { try { setUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('redconnect_user'); } }
+    if (saved) { 
+      try { 
+        setUser(JSON.parse(saved)); 
+      } catch (e) { 
+        localStorage.removeItem('redconnect_user'); 
+      } 
+    }
   }, []);
 
   const handleLogin = (u: AuthenticatedUser) => {
@@ -178,7 +177,6 @@ const App: React.FC = () => {
 
         <section className="md:col-span-9">
           {activeTab === 'new-request' && <HospitalRequestForm hospitalName={user.name} onSubmit={handleCreateRequest} />}
-          {/* Fix: Provide full inventory object to match Record<BloodType, number> type requirement */}
           {activeTab === 'my-stock' && (
             <StockManagement 
               bankName={user.name} 
@@ -192,8 +190,6 @@ const App: React.FC = () => {
           {activeTab === 'feed' && <EmergencyFeed requests={allRequests} onMatch={setSelectedRequest} dengueMode={false} userLocation={userLocation} />}
           {activeTab === 'scanner' && <NearbyScanner initialLocation={userLocation} />}
           {activeTab === 'drives' && <BloodDriveList onNotify={addNotification} user={user} initialLocation={userLocation} />}
-          {activeTab === 'leaderboard' && <Leaderboard />}
-          {activeTab === 'campaign-studio' && <CampaignGenerator />}
         </section>
       </main>
 

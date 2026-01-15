@@ -1,0 +1,8 @@
+{
+  "name": "Red Connect Pro Command Center",
+  "description": "Professional emergency blood coordination platform with e-RaktKosh integration and Gemini-powered Map Command Center.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ]
+}

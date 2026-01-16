@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { Landmark, Building2, User, Mail, ShieldCheck, Activity, Camera, Check, Trash2, Sparkles, MapPin, ChevronRight, Calendar, Smartphone, Lock, Loader2, KeyRound, Eye, EyeOff, Award, AlertCircle } from 'lucide-react';
+import { Landmark, Building2, User, Mail, ShieldCheck, Activity, Camera, Check, Trash2, Sparkles, MapPin, ChevronRight, Calendar, Smartphone, Lock, Loader2, KeyRound, Eye, EyeOff, Award, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { extractLicenseDetails } from '../services/geminiService';
 import { backendService } from '../services/backendService';
 
@@ -120,7 +119,7 @@ const InstitutionalRegistrationForm: React.FC<InstitutionalRegistrationFormProps
       return;
     }
     if (!keysMatch) {
-      alert("Access keys do not match.");
+      alert("Security Access Keys do not match.");
       return;
     }
     setIsSubmitting(true);
@@ -130,7 +129,7 @@ const InstitutionalRegistrationForm: React.FC<InstitutionalRegistrationFormProps
     }, 1500);
   };
 
-  const inputBaseClass = "w-full pl-12 pr-4 py-4 bg-white border-2 border-slate-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-red-500/10 focus:border-red-600 font-bold text-slate-900 transition-all shadow-sm placeholder:text-slate-300";
+  const inputBaseClass = "w-full pl-12 pr-12 py-4 bg-white border-2 border-slate-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-red-500/10 focus:border-red-600 font-bold text-slate-900 transition-all shadow-sm placeholder:text-slate-300";
 
   return (
     <div className="bg-white rounded-[2.5rem] border-2 border-slate-100 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-700 max-h-[85vh] overflow-y-auto scrollbar-hide">
@@ -221,21 +220,26 @@ const InstitutionalRegistrationForm: React.FC<InstitutionalRegistrationFormProps
           <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-[9px]">03</span> Secure Credentials</h3>
           <div className="grid md:grid-cols-2 gap-8">
             <div className="space-y-2.5">
-              <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-2">Access Key</label>
+              <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-2">Security Access Key</label>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input type={showKey ? "text" : "password"} required placeholder="Secure Access Key" className={inputBaseClass} value={formData.accessKey} onChange={e => setFormData({...formData, accessKey: e.target.value})} />
+                <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={inputBaseClass} value={formData.accessKey} onChange={e => setFormData({...formData, accessKey: e.target.value})} />
                 <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">{showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
               </div>
             </div>
             <div className="space-y-2.5">
-              <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-2">Confirm Key</label>
+              <label className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] ml-2">Confirm Security Key</label>
               <div className="relative">
                 <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input type={showKey ? "text" : "password"} required className={`${inputBaseClass} ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmAccessKey} onChange={e => setFormData({...formData, confirmAccessKey: e.target.value})} />
+                <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`${inputBaseClass} ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmAccessKey} onChange={e => setFormData({...formData, confirmAccessKey: e.target.value})} />
               </div>
             </div>
           </div>
+          {formData.confirmAccessKey && (
+            <div className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ml-2 ${keysMatch ? 'text-emerald-600' : 'text-red-500'}`}>
+              {keysMatch ? <><CheckCircle2 className="w-3 h-3" /> Keys Synchronized</> : <><AlertCircle className="w-3 h-3" /> Keys Must Match</>}
+            </div>
+          )}
         </div>
 
         <button type="submit" disabled={isSubmitting || !isOtpVerified || !keysMatch} className="w-full bg-slate-900 text-white py-6 rounded-[2.5rem] font-black uppercase tracking-[0.3em] text-xs hover:bg-slate-800 transition-all shadow-2xl disabled:opacity-40">

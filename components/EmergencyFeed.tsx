@@ -30,12 +30,14 @@ import {
   ArrowRight,
   ShieldCheck,
   Smartphone,
-  Volume2
+  Volume2,
+  PackageCheck
 } from 'lucide-react';
-import { EmergencyRequest, BloodType } from '../services/types';
+import { EmergencyRequest, BloodType, AuthenticatedUser } from '../services/types';
 import { GeoCoords, calculateDistance } from '../services/locationService';
 import { fetchLiveAvailability, ERaktKoshStatus } from '../services/eraktkoshService';
 import { speakEmergencyAlert } from '../services/geminiService';
+import { backendService } from '../services/backendService';
 import InteractiveMap from './InteractiveMap';
 
 interface FeedProps {
@@ -43,18 +45,20 @@ interface FeedProps {
   onMatch: (req: EmergencyRequest) => void;
   dengueMode: boolean;
   userLocation: GeoCoords | null;
+  user?: AuthenticatedUser | null;
 }
 
 type FeedScope = 'local' | 'nationwide';
 type ViewMode = 'list' | 'map';
 
-const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, userLocation }) => {
+const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, userLocation, user }) => {
   const [filter, setFilter] = useState('');
   const [scope, setScope] = useState<FeedScope>('nationwide');
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [checkingInventory, setCheckingInventory] = useState<string | null>(null);
   const [inventoryStatus, setInventoryStatus] = useState<Record<string, ERaktKoshStatus>>({});
   const [isSpeaking, setIsSpeaking] = useState<string | null>(null);
+  const [fulfillingId, setFulfillingId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     return requests.filter(r => {
@@ -110,9 +114,17 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
     }
   };
 
+  const handleMarkFulfilled = async (req: EmergencyRequest) => {
+    setFulfillingId(req.id);
+    setTimeout(() => {
+      backendService.updateEmergencyRequestStatus(req.id, 'Fulfilled');
+      setFulfillingId(null);
+    }, 800);
+  };
+
   const nationalStats = useMemo(() => ({
     totalUnits: filtered.reduce((acc, curr) => acc + curr.unitsNeeded, 0),
-    criticalCount: filtered.filter(r => r.urgency === 'Critical').length,
+    criticalCount: filtered.filter(r => r.urgency === 'Critical' && r.status !== 'Fulfilled').length,
     activeNodes: filtered.map(r => r.hospital).filter((v, i, a) => a.indexOf(v) === i).length
   }), [filtered]);
 
@@ -247,11 +259,19 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
                 
                 const isCritical = req.urgency === 'Critical';
                 const status = inventoryStatus[req.id];
+                const isFulfilled = req.status === 'Fulfilled';
+
+                // Bulletproof string splitting for Node IDs
+                const getSafeRegistryId = (id: any) => {
+                  const str = typeof id === 'string' ? id : 'IND-000';
+                  const parts = str.split('-');
+                  return parts.length > 1 ? parts[1].toUpperCase() : str.toUpperCase();
+                };
 
                 return (
                   <div 
                     key={req.id} 
-                    className={`group relative bg-white rounded-[3.5rem] border transition-all hover:shadow-3xl overflow-hidden ${isCritical ? 'border-red-200 ring-4 ring-red-50' : 'border-slate-100 shadow-xl'}`}
+                    className={`group relative bg-white rounded-[3.5rem] border transition-all hover:shadow-3xl overflow-hidden ${isFulfilled ? 'border-emerald-100 bg-emerald-50/5 grayscale-[0.5]' : isCritical ? 'border-red-200 ring-4 ring-red-50' : 'border-slate-100 shadow-xl'}`}
                   >
                     <div className="absolute top-0 right-0 flex gap-1 z-10">
                       <button 
@@ -261,15 +281,15 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
                         <Volume2 className="w-4 h-4" />
                         <span className="text-[10px] font-black uppercase tracking-widest">Audio Briefing</span>
                       </button>
-                      <div className={`px-10 py-3 rounded-bl-[1.5rem] text-[10px] font-black uppercase tracking-[0.2em] shadow-lg ${isCritical ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-900 text-white'}`}>
-                        {req.urgency} Case Relay
+                      <div className={`px-10 py-3 rounded-bl-[1.5rem] text-[10px] font-black uppercase tracking-[0.2em] shadow-lg ${isFulfilled ? 'bg-emerald-600 text-white' : isCritical ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-900 text-white'}`}>
+                        {isFulfilled ? 'FULFILLED' : `${req.urgency} Case Relay`}
                       </div>
                     </div>
 
                     <div className="p-10">
                       <div className="flex flex-col xl:flex-row justify-between gap-10 mb-10">
                         <div className="flex gap-8">
-                          <div className={`w-28 h-28 rounded-[2.5rem] flex flex-col items-center justify-center font-black text-4xl border-4 transition-transform group-hover:rotate-3 ${req.isPlateletRequest ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
+                          <div className={`w-28 h-28 rounded-[2.5rem] flex flex-col items-center justify-center font-black text-4xl border-4 transition-transform group-hover:rotate-3 ${isFulfilled ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : req.isPlateletRequest ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
                             <span>{req.bloodType}</span>
                             <span className="text-[10px] font-black opacity-50 tracking-[0.2em] mt-1">{req.isPlateletRequest ? 'PLT' : 'WHOLE'}</span>
                           </div>
@@ -277,7 +297,7 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
                           <div className="flex-1">
                             <h3 className="font-black text-slate-800 text-3xl tracking-tight leading-tight mb-4 flex items-center gap-3">
                               {req.patientName}
-                              <ShieldCheck className="w-6 h-6 text-emerald-500" />
+                              <ShieldCheck className={`w-6 h-6 ${isFulfilled ? 'text-emerald-500' : 'text-slate-300'}`} />
                             </h3>
                             <div className="flex flex-wrap items-center gap-6">
                               <div className="flex items-center gap-2.5 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
@@ -286,7 +306,7 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
                               </div>
                               <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                                 <MapPin className="w-4 h-4" />
-                                <span>Registry Node: {req.id.split('-')[1]?.toUpperCase() || 'IND-402'}</span>
+                                <span>Registry Node: {getSafeRegistryId(req.id)}</span>
                               </div>
                             </div>
                           </div>
@@ -294,48 +314,68 @@ const EmergencyFeed: React.FC<FeedProps> = ({ requests, onMatch, dengueMode, use
 
                         <div className="flex flex-row xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-4 pt-8 xl:pt-0 border-t xl:border-t-0 border-slate-100">
                            <div className="text-right">
-                              <p className="text-6xl font-black text-slate-900 leading-none">{req.unitsNeeded}</p>
-                              <p className="text-[11px] font-black text-slate-400 mt-2 uppercase tracking-[0.3em]">Units Priority</p>
+                              <p className={`text-6xl font-black leading-none ${isFulfilled ? 'text-emerald-600 line-through' : 'text-slate-900'}`}>{req.unitsNeeded}</p>
+                              <p className="text-[11px] font-black text-slate-400 mt-2 uppercase tracking-[0.3em]">Units {isFulfilled ? 'DELIVERED' : 'Priority'}</p>
                            </div>
                         </div>
                       </div>
 
                       {/* e-RaktKosh Live Sync Module */}
-                      <div className={`p-8 rounded-[2.5rem] border-2 transition-all duration-500 mb-10 ${status ? 'bg-slate-50 border-slate-100' : 'bg-slate-900 border-slate-800 shadow-2xl shadow-slate-900/40'}`}>
-                        <div className="flex flex-col md:flex-row items-center justify-between gap-8">
-                          <div className="flex items-center gap-5">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${status ? 'bg-emerald-100 text-emerald-600' : 'bg-white/10 text-white'}`}>
-                              {checkingInventory === req.id ? <Loader2 className="w-7 h-7 animate-spin" /> : <Database className="w-7 h-7" />}
+                      {!isFulfilled && (
+                        <div className={`p-8 rounded-[2.5rem] border-2 transition-all duration-500 mb-10 ${status ? 'bg-slate-50 border-slate-100' : 'bg-slate-900 border-slate-800 shadow-2xl shadow-slate-900/40'}`}>
+                          <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+                            <div className="flex items-center gap-5">
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${status ? 'bg-emerald-100 text-emerald-600' : 'bg-white/10 text-white'}`}>
+                                {checkingInventory === req.id ? <Loader2 className="w-7 h-7 animate-spin" /> : <Database className="w-7 h-7" />}
+                              </div>
+                              <div>
+                                <p className={`text-[11px] font-black uppercase tracking-[0.2em] mb-1 ${status ? 'text-slate-500' : 'text-slate-400'}`}>Official Government Inventory Relay</p>
+                                <h4 className={`text-lg font-black uppercase tracking-tight ${status ? 'text-slate-900' : 'text-white'}`}>
+                                  {checkingInventory === req.id ? "Pinging e-RaktKosh Cloud..." : 
+                                   status ? `Live Authoritative Stock: ${status.region}` : "Institutional Data Locked"}
+                                </h4>
+                              </div>
                             </div>
-                            <div>
-                              <p className={`text-[11px] font-black uppercase tracking-[0.2em] mb-1 ${status ? 'text-slate-500' : 'text-slate-400'}`}>Official Government Inventory Relay</p>
-                              <h4 className={`text-lg font-black uppercase tracking-tight ${status ? 'text-slate-900' : 'text-white'}`}>
-                                {checkingInventory === req.id ? "Pinging e-RaktKosh Cloud..." : 
-                                 status ? `Live Authoritative Stock: ${status.region}` : "Institutional Data Locked"}
-                              </h4>
-                            </div>
-                          </div>
 
-                          {!status && (
-                            <button 
-                              onClick={() => handleInventoryCheck(req.id, req.hospital)}
-                              disabled={checkingInventory === req.id}
-                              className="w-full md:w-auto px-10 py-4 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-red-700 transition-all shadow-2xl shadow-red-900/40 flex items-center justify-center gap-3"
-                            >
-                              {checkingInventory === req.id ? "SYNCING..." : <><RefreshCw className="w-4 h-4" /> Query e-RaktKosh</>}
-                            </button>
-                          )}
+                            {!status && (
+                              <button 
+                                onClick={() => handleInventoryCheck(req.id, req.hospital)}
+                                disabled={checkingInventory === req.id}
+                                className="w-full md:w-auto px-10 py-4 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-red-700 transition-all shadow-2xl shadow-red-900/40 flex items-center justify-center gap-3"
+                              >
+                                {checkingInventory === req.id ? "SYNCING..." : <><RefreshCw className="w-4 h-4" /> Query e-RaktKosh</>}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       <div className="flex flex-col sm:flex-row gap-5">
-                        <button 
-                          onClick={() => onMatch(req)}
-                          className="flex-1 bg-slate-900 text-white py-6 rounded-[2rem] text-[12px] font-black uppercase tracking-[0.3em] hover:bg-red-600 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95 group"
-                        >
-                          <Stethoscope className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                          Launch AI Compatibility Match
-                        </button>
+                        {!isFulfilled ? (
+                          <>
+                            <button 
+                              onClick={() => onMatch(req)}
+                              className="flex-1 bg-slate-900 text-white py-6 rounded-[2rem] text-[12px] font-black uppercase tracking-[0.3em] hover:bg-red-600 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95 group"
+                            >
+                              <Stethoscope className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                              Launch AI Compatibility Match
+                            </button>
+                            {user?.role === 'Hospital' && (
+                              <button 
+                                onClick={() => handleMarkFulfilled(req)}
+                                disabled={fulfillingId === req.id}
+                                className="flex-1 bg-emerald-600 text-white py-6 rounded-[2rem] text-[12px] font-black uppercase tracking-[0.3em] hover:bg-emerald-700 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95"
+                              >
+                                {fulfillingId === req.id ? <Loader2 className="w-6 h-6 animate-spin" /> : <><PackageCheck className="w-6 h-6" /> Mark as Received</>}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex-1 bg-emerald-50 border-2 border-emerald-100 py-6 rounded-[2rem] flex items-center justify-center gap-4 text-emerald-700">
+                             <CheckCircle2 className="w-6 h-6" />
+                             <span className="text-xs font-black uppercase tracking-widest">Medical Dispatch Fulfilled & Logged</span>
+                          </div>
+                        )}
                         <a 
                           href={`tel:${req.contact}`}
                           className="sm:w-24 flex items-center justify-center bg-red-600 text-white py-6 sm:py-0 rounded-[2rem] hover:bg-slate-900 transition-all shadow-2xl active:scale-95"

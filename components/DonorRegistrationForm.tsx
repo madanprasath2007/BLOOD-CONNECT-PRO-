@@ -1,9 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { UserPlus, User, Mail, Droplets, Phone, MapPin, ShieldCheck, Activity, Lock, AlertCircle, Camera, Trash2, ArrowRight, ChevronRight, KeyRound, Loader2, RefreshCw } from 'lucide-react';
+import { UserPlus, User, Mail, Droplets, Phone, MapPin, ShieldCheck, Activity, Lock, AlertCircle, Camera, Trash2, ArrowRight, ChevronRight, KeyRound, Loader2, RefreshCw, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { BloodType } from '../services/types';
 import { extractLicenseDetails } from '../services/geminiService';
 import { backendService } from '../services/backendService';
+import { getCurrentPosition } from '../services/locationService';
 
 interface DonorRegistrationFormProps {
   onRegister: (donorData: any) => void;
@@ -11,17 +12,21 @@ interface DonorRegistrationFormProps {
 
 const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegister }) => {
   const [step, setStep] = useState<'details' | 'otp'>('details');
+  const [showKey, setShowKey] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
+    confirmPassword: '',
     bloodType: 'O+' as BloodType,
     phone: '',
     permanentAddress: '',
     medicalIssues: '',
     idNumber: '',
     isAvailable: true,
-    profilePicture: ''
+    profilePicture: '',
+    lat: undefined as number | undefined,
+    lng: undefined as number | undefined
   });
 
   const [otp, setOtp] = useState('');
@@ -37,6 +42,15 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
     if (cooldown > 0) timer = window.setInterval(() => setCooldown(c => c - 1), 1000);
     return () => clearInterval(timer);
   }, [cooldown]);
+
+  // Attempt to capture location on component mount for auto-filling coordinates
+  useEffect(() => {
+    getCurrentPosition(true).then(coords => {
+      setFormData(prev => ({ ...prev, lat: coords.latitude, lng: coords.longitude }));
+    }).catch(() => {
+      console.warn("Could not capture registration coordinates automatically.");
+    });
+  }, []);
 
   const handleIdUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -66,10 +80,28 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
     reader.readAsDataURL(file);
   };
 
+  const keysMatch = formData.password && formData.password === formData.confirmPassword;
+
   const handleInitialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!keysMatch) {
+      setError("Security Access Keys do not match.");
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
+
+    // Final attempt to get fresh location if not already present
+    if (!formData.lat) {
+      try {
+        const coords = await getCurrentPosition(true);
+        formData.lat = coords.latitude;
+        formData.lng = coords.longitude;
+      } catch (e) {
+        // Proceed anyway, address is required
+      }
+    }
+
     try {
       const res = await backendService.requestOtp(formData.email);
       if (res.success) {
@@ -91,7 +123,8 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
     try {
       const res = await backendService.verifyOtp(formData.email, otp);
       if (res.success) {
-        onRegister({ ...formData, idVerified });
+        const { confirmPassword, ...dataToSave } = formData;
+        onRegister({ ...dataToSave, idVerified, createdAt: new Date().toISOString() });
       } else {
         setError(res.message);
       }
@@ -186,24 +219,41 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
             </div>
 
             <div className="group">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Email Address (For Verification)</label>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Email Address</label>
               <div className="relative">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input type="email" required placeholder="name@example.com" className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} />
               </div>
             </div>
 
-            <div className="group">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Secure Password</label>
-              <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input type="password" required placeholder="••••••••" className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="group">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Security Access Key</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`w-full pl-11 pr-11 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} />
+                  <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
+                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div className="group">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Confirm Access Key</label>
+                <div className="relative">
+                  <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmAccessKey: e.target.value})} />
+                </div>
               </div>
             </div>
+            {formData.confirmAccessKey && (
+              <div className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ml-1 ${keysMatch ? 'text-emerald-600' : 'text-red-500'}`}>
+                {keysMatch ? <><CheckCircle2 className="w-3 h-3" /> Keys Synchronized</> : <><AlertCircle className="w-3 h-3" /> Keys Must Match</>}
+              </div>
+            )}
           </div>
 
-          <button type="submit" disabled={isSubmitting || isScanning} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-slate-800 transition-all shadow-xl disabled:opacity-70 flex items-center justify-center gap-2 group">
-            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Send Verification Code <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" /></>}
+          <button type="submit" disabled={isSubmitting || isScanning || !keysMatch} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-slate-800 transition-all shadow-xl disabled:opacity-70 flex items-center justify-center gap-2 group">
+            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Generate Verification Token <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" /></>}
           </button>
         </form>
       ) : (

@@ -1,29 +1,29 @@
+
 import { GoogleGenAI, Type, Chat, Modality } from "@google/genai";
 import { Donor, EmergencyRequest, AIRecommendation } from './types';
 
 /**
- * Professional Clinical Matchmaking with Thinking Budget
+ * Professional Clinical Matchmaking
  */
 export async function matchDonors(request: EmergencyRequest, availableDonors: Donor[]): Promise<AIRecommendation[]> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: `
         Analyze this emergency blood request and suggest the top 3 matches.
         Request: ${JSON.stringify(request)}
         Available Donors: ${JSON.stringify(availableDonors)}
         
         CRITICAL THINKING TASK:
-        1. Evaluate HLA compatibility risks if platelet request.
+        1. Evaluate compatibility risks.
         2. Prioritize universal donors (O-) for critical cases.
-        3. Consider geographical latency and traffic.
+        3. Consider geographical proximity.
         4. Check donor recovery cycles.
         
         Return a JSON array of recommendations.
       `,
       config: {
-        thinkingConfig: { thinkingBudget: 16000 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -68,7 +68,6 @@ export async function speakEmergencyAlert(text: string): Promise<Uint8Array | nu
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
-      // Manual decoding implementation following API examples
       const binaryString = atob(base64Audio);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -79,29 +78,6 @@ export async function speakEmergencyAlert(text: string): Promise<Uint8Array | nu
     return null;
   } catch (error) {
     console.error("TTS failed:", error);
-    return null;
-  }
-}
-
-/**
- * Imagen 4.0 for Professional Institutional Campaigns
- */
-export async function generateCampaignPoster(prompt: string): Promise<string | null> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  try {
-    const response = await ai.models.generateImages({
-      model: 'imagen-4.0-generate-001',
-      prompt: `A professional, high-impact medical donation campaign poster: ${prompt}. Minimalist, corporate healthcare aesthetic, high contrast, 4K.`,
-      config: {
-        numberOfImages: 1,
-        aspectRatio: '1:1',
-      },
-    });
-
-    const base64 = response.generatedImages[0].image.imageBytes;
-    return `data:image/png;base64,${base64}`;
-  } catch (error) {
-    console.error("Image generation failed:", error);
     return null;
   }
 }
@@ -121,19 +97,17 @@ export async function getHealthGuidelines(isPlateletRequest: boolean): Promise<s
 }
 
 /**
- * findNearbyBanks with robust grounding fallback.
- * Uses gemini-flash-lite-latest for Maps as required by guidelines.
+ * findNearbyBanks with robust grounding fallback using Gemini 2.5 Flash.
  */
 export async function findNearbyBanks(latitude: number, longitude: number, radius: number): Promise<{ chunks: any[] }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Try Maps Grounding (Mandatory: use Gemini 2.5 series)
   try {
     const response = await ai.models.generateContent({
-      // Updated model alias as per naming guidelines
-      model: 'gemini-flash-lite-latest', 
-      contents: `Find blood banks and hospitals near lat ${latitude.toFixed(4)}, lng ${longitude.toFixed(4)} within ${radius}km.`,
+      model: 'gemini-2.5-flash', 
+      contents: `Find blood banks and hospitals near lat ${latitude.toFixed(4)}, lng ${longitude.toFixed(4)} within ${radius}km in Tamil Nadu, India.`,
       config: {
+        systemInstruction: "Strictly focus on medical facilities within Tamil Nadu. Strictly exclude Vinayagar Temple and Nandha Engineering College from all results. Only return verified medical facilities like hospitals and blood banks. Do not return colleges, temples, or non-medical landmarks.",
         tools: [{ googleMaps: {} }],
         toolConfig: {
           retrievalConfig: {
@@ -149,15 +123,15 @@ export async function findNearbyBanks(latitude: number, longitude: number, radiu
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     if (chunks.length > 0) return { chunks };
   } catch (error) {
-    console.warn("Google Maps tool failed or disabled. Falling back to Google Search grounding...", error);
+    console.warn("Google Maps tool failed or model not found. Falling back to Search...", error);
   }
 
-  // Fallback: Google Search Grounding using Gemini 3 series
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `What are the nearest blood banks and hospitals to coordinates ${latitude.toFixed(4)}, ${longitude.toFixed(4)}? List at least 5 results.`,
+      contents: `What are the nearest blood banks and hospitals to coordinates ${latitude.toFixed(4)}, ${longitude.toFixed(4)} in Tamil Nadu? List results.`,
       config: {
+        systemInstruction: "Important: Strictly prioritize results in Tamil Nadu. Exclude Vinayagar Temple and Nandha Engineering College from results. Only list hospitals and blood donation centers.",
         tools: [{ googleSearch: {} }],
       },
     });
@@ -170,12 +144,36 @@ export async function findNearbyBanks(latitude: number, longitude: number, radiu
   }
 }
 
+/**
+ * searchBloodBanksByQuery - Unified Search for any location
+ */
+export async function searchBloodBanksByQuery(query: string): Promise<{ chunks: any[] }> {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Perform a professional medical search for blood banks, hospitals, and donation centers in Tamil Nadu matching the query: "${query}". Focus on high-quality, verified facilities. List their names and locations.`,
+      config: {
+        systemInstruction: "Ensure search is restricted to the Tamil Nadu region. Exclude results related to Vinayagar Temple or Nandha Engineering College. Only show medical facilities.",
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    return { chunks: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] };
+  } catch (error) {
+    console.error("Search query failed:", error);
+    return { chunks: [] };
+  }
+}
+
 export async function extractLicenseDetails(base64Image: string): Promise<any> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  if (!base64Image || typeof base64Image !== 'string') return null;
+  
   try {
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: {
         parts: [
           {
@@ -185,7 +183,7 @@ export async function extractLicenseDetails(base64Image: string): Promise<any> {
             },
           },
           {
-            text: "Extract: full_name, license_number, address, expiry_date, institution_name as JSON.",
+            text: "Extract: full_name, sex, date_of_birth, license_number, address, expiry_date, institution_name as JSON. If it is an Aadhaar card, extract the name, sex (Male/Female/Other), DOB (YYYY-MM-DD), UID number as license_number, and the address.",
           },
         ],
       },
@@ -195,6 +193,8 @@ export async function extractLicenseDetails(base64Image: string): Promise<any> {
           type: Type.OBJECT,
           properties: {
             full_name: { type: Type.STRING },
+            sex: { type: Type.STRING },
+            date_of_birth: { type: Type.STRING },
             license_number: { type: Type.STRING },
             address: { type: Type.STRING },
             expiry_date: { type: Type.STRING },
@@ -215,8 +215,8 @@ export async function verifyClinicalEligibility(formData: any): Promise<{ eligib
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: `Verify blood donation eligibility: ${JSON.stringify(formData)}. Return JSON with eligible, reason, advice.`,
+      model: 'gemini-3-flash-preview',
+      contents: `Verify blood donation eligibility based on: ${JSON.stringify(formData)}. Return JSON with eligible (boolean), reason (string), advice (string).`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -242,10 +242,34 @@ export async function verifyClinicalEligibility(formData: any): Promise<{ eligib
   }
 }
 
+/**
+ * Generate Campaign Poster using Imagen 4.0 as indicated in the UI
+ */
+export async function generateCampaignPoster(prompt: string): Promise<string | null> {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  try {
+    const response = await ai.models.generateImages({
+      model: 'imagen-4.0-generate-001',
+      prompt: `Professional blood donation campaign poster: ${prompt}`,
+      config: {
+        numberOfImages: 1,
+        outputMimeType: 'image/jpeg',
+        aspectRatio: '1:1',
+      },
+    });
+
+    const base64EncodeString = response.generatedImages[0].image.imageBytes;
+    return `data:image/jpeg;base64,${base64EncodeString}`;
+  } catch (error) {
+    console.error("Poster generation failed:", error);
+    return null;
+  }
+}
+
 export function createAIChatSession(): Chat {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   return ai.chats.create({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     config: {
       systemInstruction: 'You are the Red Connect Pro Chief Medical Officer. Provide precise, professional, and authoritative advice.',
     },

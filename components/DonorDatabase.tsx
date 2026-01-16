@@ -11,26 +11,38 @@ import {
   Navigation,
   ArrowUpDown,
   User,
-  Loader2
+  Loader2,
+  MapPinned,
+  CheckCircle2,
+  Sparkles,
+  Zap,
+  Clock,
+  FileSpreadsheet,
+  Download,
+  Calendar
 } from 'lucide-react';
 import { backendService } from '../services/backendService';
 import { Donor, BloodType } from '../services/types';
 import DonationReceipt from './DonationReceipt';
-import { GeoCoords } from '../services/locationService';
+import { GeoCoords, calculateDistance } from '../services/locationService';
 
 interface DonorDatabaseProps {
   userLocation: GeoCoords | null;
+  bankId: string;
 }
 
 type SortOption = 'distance' | 'age-asc' | 'age-desc' | 'donation';
 
-const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
+const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation, bankId }) => {
   const [donors, setDonors] = useState<Donor[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<BloodType | 'All'>('All');
-  const [sortBy, setSortBy] = useState<SortOption>('distance');
+  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
+  const [sortBy, setSortBy] = useState<SortOption>('donation');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [activeReceipt, setActiveReceipt] = useState<{ donor: Donor; id: string; date: string; } | null>(null);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [activeReceipt, setActiveReceipt] = useState<{ donor: Donor; id: string; date: string; expiryDate: string; } | null>(null);
 
   useEffect(() => {
     loadDatabase();
@@ -45,51 +57,27 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
     }, 600);
   };
 
-  const deleteDonor = (id: string) => {
-    if (window.confirm('Confirm professional removal of this donor from the medical registry?')) {
-      backendService.deleteDonor(id);
-      setDonors(prev => prev.filter(d => d.id !== id));
-    }
-  };
-
-  const handleRecordDonation = (donor: Donor) => {
-    const receiptId = `BB-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
-    const date = new Date().toLocaleDateString('en-IN');
-    
-    const updatedDonors = donors.map(d => d.id === donor.id ? { 
-      ...d, 
-      isAvailable: false, 
-      lastDonation: new Date().toISOString().split('T')[0] 
-    } : d);
-    
-    setDonors(updatedDonors);
-    
-    // Persist specific updated donor back to DB
-    const updatedDonor = updatedDonors.find(d => d.id === donor.id);
-    if (updatedDonor) {
-      const fullDb = backendService.getDonors();
-      const newDb = fullDb.map(d => d.id === donor.id ? updatedDonor : d);
-      localStorage.setItem('redconnect_donor_db', JSON.stringify(newDb));
-    }
-
-    setActiveReceipt({ donor, id: receiptId, date });
-  };
-
   const getProcessedDonors = () => {
-    let result = [...donors];
+    let result = [...donors].map(d => {
+      let dynamicDistance = d.distance || 0;
+      if (userLocation && d.lat && d.lng) {
+        dynamicDistance = calculateDistance(userLocation.latitude, userLocation.longitude, d.lat, d.lng);
+      }
+      return { ...d, distance: dynamicDistance };
+    });
 
     result = result.filter(d => {
-      const matchesSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           d.phone.includes(searchTerm);
+      const matchesSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.phone.includes(searchTerm);
       const matchesType = selectedType === 'All' || d.bloodType === selectedType;
-      return matchesSearch && matchesType;
+      const matchesDate = !filterDate || d.lastDonation === filterDate;
+      return matchesSearch && matchesType && matchesDate;
     });
 
     result.sort((a, b) => {
       switch (sortBy) {
         case 'age-asc': return a.age - b.age;
         case 'age-desc': return b.age - a.age;
-        case 'distance': return a.distance - b.distance;
+        case 'distance': return (a.distance || 0) - (b.distance || 0);
         case 'donation': return new Date(b.lastDonation).getTime() - new Date(a.lastDonation).getTime();
         default: return 0;
       }
@@ -100,6 +88,98 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
 
   const filteredDonors = getProcessedDonors();
 
+  const handleExportFilteredCSV = () => {
+    setIsExporting(true);
+    setTimeout(() => {
+      if (filteredDonors.length === 0) {
+        alert("The current filtered view is empty. Nothing to export.");
+        setIsExporting(false);
+        return;
+      }
+
+      // Generate professional CSV headers
+      const headers = [
+        "Donor ID", 
+        "Name", 
+        "Blood Type", 
+        "Age", 
+        "Phone", 
+        "Last Donation Date", 
+        "Last Bag ID", 
+        "Last Bag Expiry", 
+        "Distance (KM)",
+        "Verified Status",
+        "Permanent Address"
+      ];
+
+      const rows = filteredDonors.map(d => [
+        d.id,
+        d.name,
+        d.bloodType,
+        d.age,
+        d.phone,
+        d.lastDonation,
+        d.lastBagId || 'N/A',
+        d.lastBagExpiry || 'N/A',
+        d.distance || 0,
+        d.idVerified ? "VERIFIED" : "PENDING",
+        `"${(d.permanentAddress || '').replace(/"/g, '""')}"` // Escape quotes for CSV
+      ]);
+
+      const csvContent = [
+        headers.join(","),
+        ...rows.map(e => e.join(","))
+      ].join("\n");
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      
+      link.setAttribute("href", url);
+      link.setAttribute("download", `RedConnect_Registry_Export_${timestamp}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setIsExporting(false);
+    }, 1200);
+  };
+
+  const deleteDonor = (id: string) => {
+    if (window.confirm('Confirm professional removal of this donor from the medical registry?')) {
+      backendService.deleteDonor(id);
+      setDonors(prev => prev.filter(d => d.id !== id));
+    }
+  };
+
+  const handleRecordDonation = async (donor: Donor) => {
+    setRecordingId(donor.id);
+    try {
+      const result = await backendService.recordDonation(donor.id, bankId, donor.bloodType, 350);
+      if (result.success && result.bag) {
+        setActiveReceipt({ 
+          donor, 
+          id: result.bag.id, 
+          date: new Date().toLocaleDateString('en-IN'), 
+          expiryDate: result.bag.expiryDate 
+        });
+        loadDatabase();
+      }
+    } catch (err) {
+      console.error("Donation recording failed", err);
+    } finally {
+      setRecordingId(null);
+    }
+  };
+
+  const openDirections = (donor: Donor) => {
+    const origin = userLocation ? `${userLocation.latitude},${userLocation.longitude}` : 'My+Location';
+    const destination = encodeURIComponent(donor.permanentAddress || `${donor.name} Blood Donor`);
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`, '_blank');
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-10">
       {activeReceipt && (
@@ -107,6 +187,7 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
           donor={activeReceipt.donor}
           receiptId={activeReceipt.id}
           date={activeReceipt.date}
+          expiryDate={activeReceipt.expiryDate}
           units={350}
           hbLevel={13.5}
           onClose={() => setActiveReceipt(null)}
@@ -118,22 +199,33 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
           <h2 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Network Donor Registry</h2>
           <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-0.5">Verified Medical Volunteers</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleExportFilteredCSV}
+            disabled={isExporting}
+            className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-50"
+            title="Download current filtered list as CSV for Google Sheets"
+          >
+            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
+            <span className="text-[10px] font-black uppercase tracking-widest">Export CSV</span>
+          </button>
+          
           <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-2xl shadow-sm">
             {isSyncing ? <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin" /> : <Database className="w-3.5 h-3.5 text-emerald-600" />}
             <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
-              {isSyncing ? 'Synchronizing...' : 'Med-Cloud Online'}
+              {isSyncing ? 'Syncing...' : 'Med-Cloud Online'}
             </span>
           </div>
+          
           <button onClick={loadDatabase} className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-600 transition-all shadow-sm">
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/30 space-y-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
+      <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div className="md:col-span-5 relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input 
               type="text"
@@ -143,21 +235,29 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div className="flex gap-2">
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl">
+          <div className="md:col-span-3 flex items-center gap-2 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl">
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            <input 
+              type="date" 
+              className="bg-transparent text-[10px] font-black text-slate-600 focus:outline-none uppercase w-full"
+              value={filterDate}
+              onChange={(e) => setFilterDate(e.target.value)}
+            />
+          </div>
+          <div className="md:col-span-4 flex gap-2">
+            <div className="flex-1 flex items-center gap-2 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl">
               <Filter className="w-3.5 h-3.5 text-slate-400" />
-              <select className="bg-transparent text-[10px] font-black text-slate-600 focus:outline-none uppercase tracking-widest" value={selectedType} onChange={(e) => setSelectedType(e.target.value as any)}>
-                <option value="All">All Blood Types</option>
+              <select className="bg-transparent text-[10px] font-black text-slate-600 focus:outline-none uppercase tracking-widest w-full" value={selectedType} onChange={(e) => setSelectedType(e.target.value as any)}>
+                <option value="All">All Groups</option>
                 {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3 py-2 rounded-2xl">
               <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
               <select className="bg-transparent text-[10px] font-black text-slate-600 focus:outline-none uppercase tracking-widest" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)}>
-                <option value="distance">Proximity</option>
-                <option value="age-asc">Youngest First</option>
-                <option value="age-desc">Oldest First</option>
-                <option value="donation">Last Donated</option>
+                <option value="donation">Date</option>
+                <option value="distance">GPS</option>
+                <option value="age-asc">Young</option>
               </select>
             </div>
           </div>
@@ -166,51 +266,72 @@ const DonorDatabase: React.FC<DonorDatabaseProps> = ({ userLocation }) => {
 
       <div className="grid gap-3">
         {filteredDonors.length > 0 ? (
-          filteredDonors.map((donor) => (
-            <div key={donor.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 flex flex-col sm:flex-row items-center justify-between gap-4 hover:border-red-100 hover:shadow-xl transition-all group overflow-hidden relative">
-              <div className="flex items-center gap-5 w-full sm:w-auto relative z-10">
-                <div className={`w-16 h-16 rounded-2xl flex flex-col items-center justify-center font-black text-xl border-2 ${donor.isAvailable ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                  {donor.bloodType}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h3 className="font-black text-slate-800 text-lg tracking-tight">{donor.name}</h3>
-                    <span className="bg-slate-100 text-slate-500 text-[9px] px-2 py-0.5 rounded-lg font-black uppercase tracking-widest">{donor.age} Y/O</span>
-                    {donor.idVerified && (
-                      <span className="bg-emerald-100 text-emerald-700 text-[8px] px-2.5 py-1 rounded-full font-black uppercase tracking-widest flex items-center gap-1.5 border border-emerald-200 shadow-sm">
-                        <ShieldCheck className="w-3 h-3" /> VERIFIED
-                      </span>
-                    )}
+          filteredDonors.map((donor) => {
+            const isNew = donor.createdAt && (Date.now() - new Date(donor.createdAt).getTime() < 86400000);
+            return (
+              <div key={donor.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 flex flex-col sm:flex-row items-center justify-between gap-4 hover:border-red-100 hover:shadow-xl transition-all group overflow-hidden relative">
+                <div className="flex items-center gap-5 w-full sm:w-auto relative z-10">
+                  <div className={`w-16 h-16 rounded-2xl flex flex-col items-center justify-center font-black text-xl border-2 ${donor.isAvailable ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                    {donor.bloodType}
                   </div>
-                  <div className="flex items-center gap-4 mt-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    <div className="flex items-center gap-1.5 text-emerald-600">
-                      <Navigation className="w-3.5 h-3.5" /> {donor.distance} KM
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h3 className="font-black text-slate-800 text-lg tracking-tight">{donor.name}</h3>
+                      <span className="bg-slate-100 text-slate-500 text-[9px] px-2 py-0.5 rounded-lg font-black uppercase tracking-widest">{donor.age} Y/O</span>
+                      {donor.idVerified && (
+                        <span className="bg-emerald-100 text-emerald-700 text-[8px] px-2.5 py-1 rounded-full font-black uppercase tracking-widest flex items-center gap-1.5 border border-emerald-200">
+                          <ShieldCheck className="w-3 h-3" /> VERIFIED
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Database className="w-3.5 h-3.5 text-slate-300" /> {donor.lastDonation}
+                    <div className="flex items-center gap-4 mt-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <div className="flex items-center gap-1.5 text-emerald-600">
+                        <MapPinned className="w-3.5 h-3.5" /> {donor.distance || 0} KM FROM GPS
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-300" /> 
+                        {donor.isAvailable ? (
+                          <span>Last: {donor.lastDonation}</span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                             <span className="text-red-600 font-black">BAG: {donor.lastBagId || 'N/A'}</span>
+                             <span className="text-slate-300">|</span>
+                             <span className="text-red-500">EXP: {donor.lastBagExpiry || 'N/A'}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
+                <div className="flex items-center gap-3 w-full sm:w-auto relative z-10">
+                  {donor.isAvailable ? (
+                    <button 
+                      onClick={() => handleRecordDonation(donor)} 
+                      disabled={recordingId === donor.id}
+                      className="flex-1 sm:flex-none px-6 py-3.5 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-xl shadow-red-100 active:scale-95 disabled:opacity-50"
+                    >
+                      {recordingId === donor.id ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Donation'}
+                    </button>
+                  ) : (
+                     <span className="px-6 py-3.5 bg-slate-100 text-slate-400 rounded-2xl text-[10px] font-black uppercase tracking-widest">Replenishing</span>
+                  )}
+                  <div className="flex gap-2">
+                    <a href={`tel:${donor.phone}`} className="p-3.5 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-all shadow-lg active:scale-95" title="Call Donor"><Phone className="w-4 h-4" /></a>
+                    <button onClick={() => openDirections(donor)} className="p-3.5 bg-slate-900 text-white rounded-2xl hover:bg-indigo-600 transition-all shadow-lg active:scale-95" title="Get Directions"><Navigation className="w-4 h-4" /></button>
+                  </div>
+                  <button onClick={() => deleteDonor(donor.id)} className="p-3.5 bg-slate-50 text-slate-400 rounded-2xl hover:bg-red-50 hover:text-red-600 border border-slate-100 transition-all"><Trash2 className="w-4 h-4" /></button>
+                </div>
+                <User className="absolute -bottom-6 -right-6 w-32 h-32 text-slate-50/50 -rotate-12 pointer-events-none" />
               </div>
-              <div className="flex items-center gap-3 w-full sm:w-auto relative z-10">
-                {donor.isAvailable ? (
-                  <button onClick={() => handleRecordDonation(donor)} className="flex-1 sm:flex-none px-6 py-3.5 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-xl shadow-red-100 active:scale-95">Record Donation</button>
-                ) : (
-                   <span className="px-6 py-3.5 bg-slate-100 text-slate-400 rounded-2xl text-[10px] font-black uppercase tracking-widest">Replenishing</span>
-                )}
-                <a href={`tel:${donor.phone}`} className="p-3.5 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-all shadow-lg active:scale-95"><Phone className="w-4 h-4" /></a>
-                <button onClick={() => deleteDonor(donor.id)} className="p-3.5 bg-slate-50 text-slate-400 rounded-2xl hover:bg-red-50 hover:text-red-600 border border-slate-100 transition-all"><Trash2 className="w-4 h-4" /></button>
-              </div>
-              <User className="absolute -bottom-6 -right-6 w-32 h-32 text-slate-50/50 -rotate-12 pointer-events-none" />
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="text-center py-20 bg-white rounded-[3rem] border-4 border-dashed border-slate-50 flex flex-col items-center">
             <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6">
               <Search className="w-10 h-10 text-slate-200" />
             </div>
-            <h4 className="text-slate-400 font-black uppercase tracking-[0.2em] text-sm">Registry Query: Empty</h4>
-            <p className="text-slate-300 font-bold text-xs mt-2">No donors match your current filters within the cloud node.</p>
+            <h4 className="text-slate-400 font-black uppercase tracking-[0.2em] text-sm">No collections on this date</h4>
+            <p className="text-slate-300 font-bold text-xs mt-2">Adjust temporal filter or search criteria.</p>
           </div>
         )}
       </div>

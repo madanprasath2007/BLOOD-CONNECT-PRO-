@@ -26,7 +26,6 @@ function deg2rad(deg: number): number {
 
 /**
  * Fetches the current GPS coordinates with a robust fallback mechanism.
- * If High Accuracy (GPS) fails or times out, it retries with standard accuracy.
  */
 export async function getCurrentPosition(forceLowAccuracy: boolean = false): Promise<GeoCoords> {
   const getPosition = (highAccuracy: boolean): Promise<GeoCoords> => {
@@ -62,18 +61,16 @@ export async function getCurrentPosition(forceLowAccuracy: boolean = false): Pro
         },
         { 
           enableHighAccuracy: highAccuracy, 
-          timeout: 20000, // Increased to 20s for better reliability
-          maximumAge: 10000 // Accept a cached position up to 10s old
+          timeout: 20000,
+          maximumAge: 5000 
         }
       );
     });
   };
 
   try {
-    // Attempt 1: High Accuracy (unless forced low)
     return await getPosition(!forceLowAccuracy);
   } catch (error: any) {
-    // If it's a timeout or unavailable error and we haven't tried low accuracy yet, fallback
     if ((error.code === 3 || error.code === 2) && !forceLowAccuracy) {
       console.warn("High accuracy timed out. Falling back to standard location services...");
       return await getPosition(false);
@@ -84,6 +81,7 @@ export async function getCurrentPosition(forceLowAccuracy: boolean = false): Pro
 
 /**
  * Starts watching the user's position for real-time updates.
+ * Optimized for 'perfect' tracking by enabling high accuracy and zero age.
  */
 export function startLocationWatch(
   onUpdate: (coords: GeoCoords) => void,
@@ -96,14 +94,13 @@ export function startLocationWatch(
   return navigator.geolocation.watchPosition(
     (pos) => onUpdate({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
     (err) => {
-      // For watch, we stay on standard accuracy if GPS fails
       console.error("Location watch error:", err.message);
       onError(new Error(err.message));
     },
     { 
-      enableHighAccuracy: false, // For continuous watch, use standard to save battery/reduce timeouts
-      maximumAge: 10000, 
-      timeout: 25000 
+      enableHighAccuracy: true, // High accuracy for perfect tracking
+      maximumAge: 0,            // No caching, always fresh data
+      timeout: 30000            // Higher timeout for reliable locks
     }
   );
 }

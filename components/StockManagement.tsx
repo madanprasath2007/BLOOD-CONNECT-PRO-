@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Save, 
   RefreshCcw, 
@@ -16,9 +16,11 @@ import {
   ClipboardList,
   ChevronRight,
   Search,
-  CheckCircle2
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
 import { BloodType } from '../services/types';
+import { backendService } from '../services/backendService';
 
 interface BloodBag {
   id: string;
@@ -27,58 +29,18 @@ interface BloodBag {
   collectionDate: string;
   source: string;
   volume: number; // in ml
+  bankId?: string;
 }
 
 interface StockManagementProps {
+  bankId: string;
   bankName: string;
-  initialInventory: Record<BloodType, number>;
-  initialPlatelets: number;
 }
 
-const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInventory, initialPlatelets }) => {
-  // Initialize mock bags based on aggregate counts
-  const generateInitialBags = () => {
-    const bags: BloodBag[] = [];
-    const types = Object.keys(initialInventory) as BloodType[];
-    
-    types.forEach(type => {
-      for (let i = 0; i < initialInventory[type]; i++) {
-        const collected = new Date();
-        collected.setDate(collected.getDate() - Math.floor(Math.random() * 20));
-        const expiry = new Date(collected);
-        expiry.setDate(expiry.getDate() + 35); // Whole blood 35 days
-        
-        bags.push({
-          id: `BAG-${type}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          type,
-          collectionDate: collected.toISOString().split('T')[0],
-          expiryDate: expiry.toISOString().split('T')[0],
-          source: i % 2 === 0 ? 'Internal Drive' : 'City Regional Sync',
-          volume: 350
-        });
-      }
-    });
-
-    for (let i = 0; i < initialPlatelets; i++) {
-      const collected = new Date();
-      collected.setDate(collected.getDate() - Math.floor(Math.random() * 3));
-      const expiry = new Date(collected);
-      expiry.setDate(expiry.getDate() + 5); // Platelets 5 days
-      
-      bags.push({
-        id: `PLT-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-        type: 'Platelets',
-        collectionDate: collected.toISOString().split('T')[0],
-        expiryDate: expiry.toISOString().split('T')[0],
-        source: 'Apheresis Unit 1',
-        volume: 250
-      });
-    }
-    return bags;
-  };
-
-  const [bags, setBags] = useState<BloodBag[]>(generateInitialBags());
+const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) => {
+  const [bags, setBags] = useState<BloodBag[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleTimeString());
   const [isRegistering, setIsRegistering] = useState<BloodType | 'Platelets' | null>(null);
   const [viewMode, setViewMode] = useState<'aggregate' | 'ledger'>('aggregate');
@@ -90,6 +52,21 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
     expiryDate: '',
     collectionDate: new Date().toISOString().split('T')[0]
   });
+
+  useEffect(() => {
+    loadInventory();
+  }, [bankId]);
+
+  const loadInventory = () => {
+    setIsLoading(true);
+    setTimeout(() => {
+      const allBags = backendService.getBloodBags();
+      // Filter bags for this specific bank
+      const bankBags = allBags.filter(b => b.bankId === bankId || !b.bankId);
+      setBags(bankBags);
+      setIsLoading(false);
+    }, 500);
+  };
 
   const aggregateCounts = useMemo(() => {
     const counts: Record<string, number> = { 'Platelets': 0 };
@@ -111,9 +88,11 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
       collectionDate: newBagData.collectionDate,
       expiryDate: newBagData.expiryDate,
       source: newBagData.source,
-      volume: isRegistering === 'Platelets' ? 250 : 350
+      volume: isRegistering === 'Platelets' ? 250 : 350,
+      bankId: bankId
     };
 
+    backendService.saveBloodBag(newBag);
     setBags(prev => [newBag, ...prev]);
     setIsRegistering(null);
     setNewBagData({ id: '', source: 'Internal Collection', expiryDate: '', collectionDate: new Date().toISOString().split('T')[0] });
@@ -121,6 +100,7 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
 
   const removeBag = (id: string) => {
     if (window.confirm("Confirm unit de-registration? This will permanently remove the bag from active inventory.")) {
+      backendService.removeBloodBag(id);
       setBags(prev => prev.filter(b => b.id !== id));
     }
   };
@@ -137,6 +117,15 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
     const diff = new Date(expiry).getTime() - new Date().getTime();
     return Math.ceil(diff / (1000 * 3600 * 24));
   };
+
+  if (isLoading) {
+    return (
+      <div className="py-32 flex flex-col items-center justify-center text-slate-400">
+        <Loader2 className="w-12 h-12 animate-spin mb-4 text-red-600" />
+        <p className="font-black uppercase tracking-widest text-xs">Accessing Secure Stock Vault...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
@@ -219,7 +208,7 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
                               {bag.type}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-slate-400">{bag.source}</td>
+                          <td className="px-6 py-4 text-slate-400 truncate max-w-[150px]">{bag.source}</td>
                           <td className="px-6 py-4">
                             <div className="flex flex-col">
                               <span className={days < 5 ? 'text-red-400' : days < 10 ? 'text-amber-400' : 'text-emerald-400'}>
@@ -239,6 +228,11 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
                         </tr>
                       );
                     })}
+                    {bags.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-20 text-center text-slate-500 uppercase tracking-widest text-[10px]">Vault Empty • Register unit or record donation</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -277,15 +271,21 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
         >
           {isSaving ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Commit Updates to e-Raktkosh Network</>}
         </button>
-        <button className="px-8 bg-white border border-slate-200 rounded-2xl text-slate-500 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
-          Audit Log
+        <button onClick={loadInventory} className="px-8 bg-white border border-slate-200 rounded-2xl text-slate-500 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
+          Sync Global
         </button>
       </div>
 
       {/* Bag Registration Modal */}
       {isRegistering && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+        <div 
+          onClick={() => setIsRegistering(null)}
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300"
+          >
             <div className="bg-slate-900 p-8 text-white relative">
               <div className="relative z-10 flex items-center gap-3">
                 <div className="p-2.5 bg-red-600 rounded-xl">
@@ -297,8 +297,9 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankName, initialInve
                 </div>
               </div>
               <button 
+                type="button"
                 onClick={() => setIsRegistering(null)}
-                className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors"
+                className="absolute top-8 right-8 p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-all z-[130]"
               >
                 <X className="w-6 h-6" />
               </button>

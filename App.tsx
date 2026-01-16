@@ -1,19 +1,28 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Droplet, LayoutDashboard, Bell, LogOut, PlusSquare, Database, Users, 
-  CalendarDays, Stethoscope, Trophy, Radar, Globe, Palette, Zap
+  Droplet, LayoutDashboard, Bell, LogOut, PlusSquare, Database, Users, MapPin, 
+  CalendarDays, Stethoscope, Trophy, Radar, Globe, Zap, Heart, ShieldCheck, Truck, ClipboardCheck,
+  Droplets
 } from 'lucide-react';
 import EmergencyFeed from './components/EmergencyFeed';
+import InventorySync from './components/InventorySync';
 import BloodDriveList from './components/BloodDriveList';
 import NearbyScanner from './components/NearbyScanner';
 import AIAssistant from './components/AIAssistant';
 import LoginPage from './components/LoginPage';
 import HospitalRequestForm from './components/HospitalRequestForm';
+import DonorRegistrationForm from './components/DonorRegistrationForm';
 import StockManagement from './components/StockManagement';
 import DonorDatabase from './components/DonorDatabase';
+import BloodAllocation from './components/BloodAllocation';
+import BloodCollection from './components/BloodCollection';
 import ChatBot from './components/ChatBot';
+import DonationSchedule from './components/DonationSchedule';
+import EligibilityChecker from './components/EligibilityChecker';
+import Leaderboard from './components/Leaderboard';
 import { EmergencyRequest, AuthenticatedUser, BloodType } from './services/types';
-import { getCurrentPosition, GeoCoords } from './services/locationService';
+import { getCurrentPosition, GeoCoords, startLocationWatch } from './services/locationService';
 import { subscribeToNetwork, NetworkEvent } from './services/networkService';
 import { backendService } from './services/backendService';
 
@@ -24,7 +33,7 @@ interface Notification {
   type: 'info' | 'success' | 'alert';
 }
 
-type TabType = 'feed' | 'scanner' | 'drives' | 'new-request' | 'register-donor' | 'my-stock' | 'donor-db' | 'schedule' | 'eligibility' | 'leaderboard' | 'campaign-studio';
+type TabType = 'feed' | 'scanner' | 'drives' | 'new-request' | 'register-donor' | 'my-stock' | 'donor-db' | 'allocation' | 'schedule' | 'eligibility' | 'leaderboard' | 'collection';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
@@ -56,7 +65,7 @@ const App: React.FC = () => {
     refreshData();
     const unsubscribe = subscribeToNetwork((event: NetworkEvent) => {
       if (event.type === 'GLOBAL_SOS') {
-        addNotification(`🚨 URGENT SOS: ${event.payload.hospitalName} needs ${event.payload.request.bloodType}!`, 'alert');
+        addNotification(`🚨 SOS: ${event.payload.hospitalName} needs ${event.payload.request.bloodType}!`, 'alert');
         refreshData();
       } else if (event.type === 'DATA_CHANGE') {
         refreshData();
@@ -66,15 +75,23 @@ const App: React.FC = () => {
   }, [addNotification, refreshData]);
 
   useEffect(() => {
-    getCurrentPosition().then(setUserLocation).catch(() => setUserLocation({ latitude: 28.6139, longitude: 77.2090 }));
+    // Initial position fetch
+    getCurrentPosition()
+      .then(setUserLocation)
+      .catch(() => setUserLocation({ latitude: 13.0827, longitude: 80.2707 }));
+
+    // Start continuous live tracking
+    const watchId = startLocationWatch(
+      (coords) => setUserLocation(coords),
+      (err) => console.error("Global location tracking error:", err)
+    );
+
     const saved = localStorage.getItem('redconnect_user');
-    if (saved) { 
-      try { 
-        setUser(JSON.parse(saved)); 
-      } catch (e) { 
-        localStorage.removeItem('redconnect_user'); 
-      } 
-    }
+    if (saved) { try { setUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('redconnect_user'); } }
+
+    return () => {
+      if (watchId !== -1) navigator.geolocation.clearWatch(watchId);
+    };
   }, []);
 
   const handleLogin = (u: AuthenticatedUser) => {
@@ -99,7 +116,8 @@ const App: React.FC = () => {
       isPlateletRequest: requestData.isPlateletRequest || false,
       contact: 'Emergency Desk',
       timestamp: 'Just now',
-      coordinates: userLocation ? { lat: userLocation.latitude, lng: userLocation.longitude } : undefined
+      coordinates: userLocation ? { lat: userLocation.latitude, lng: userLocation.longitude } : undefined,
+      status: 'Pending'
     };
     backendService.saveEmergencyRequest(newReq);
     setActiveTab('feed');
@@ -125,7 +143,7 @@ const App: React.FC = () => {
       <header className="sticky top-0 z-40 bg-white border-b border-slate-100 px-4 py-3 md:px-8 shadow-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-100">
+            <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center shadow-lg">
               <Droplet className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -133,8 +151,7 @@ const App: React.FC = () => {
               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Medical Command Cloud</p>
             </div>
           </div>
-          
-          <div className="flex items-center gap-4 relative">
+          <div className="flex items-center gap-4">
             <button className={`p-2.5 bg-white rounded-xl text-slate-500 hover:bg-slate-50 transition-all border border-slate-200 ${newNotifPulse ? 'ring-2 ring-red-500 animate-bounce' : ''}`}>
               <Bell className="w-5 h-5" />
             </button>
@@ -149,47 +166,50 @@ const App: React.FC = () => {
         <nav className="hidden md:flex md:col-span-3 flex-col h-[calc(100vh-140px)] sticky top-28 space-y-2">
           {user.role === 'Hospital' && (
             <div className="space-y-2 mb-4">
-              <button onClick={() => handleCreateRequest({ bloodType: 'O-', unitsNeeded: 2, urgency: 'Critical' })} className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-red-600 rounded-2xl font-black text-white shadow-xl hover:bg-red-700 transition-all active:scale-95">
+              <button onClick={() => handleCreateRequest({ bloodType: 'O-', unitsNeeded: 1, urgency: 'Critical' })} className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-red-600 rounded-2xl font-black text-white shadow-xl hover:bg-red-700 transition-all active:scale-95">
                 <Zap className="w-5 h-5" /><span className="uppercase text-xs tracking-widest">SOS BROADCAST</span>
               </button>
               <NavButton tab="new-request" icon={PlusSquare} label="Post Case" color="bg-slate-900" />
             </div>
           )}
-          
           {user.role === 'BloodBank' && (
             <div className="space-y-2 mb-4">
+              <NavButton tab="collection" icon={Droplets} label="Blood Collection" color="bg-red-600" />
+              <NavButton tab="allocation" icon={ClipboardCheck} label="Dispatch Command" color="bg-slate-900" />
               <NavButton tab="my-stock" icon={Database} label="Stock Inventory" color="bg-slate-900" />
-              <NavButton tab="campaign-studio" icon={Palette} label="Campaign Studio" color="bg-indigo-600" />
               <NavButton tab="donor-db" icon={Users} label="Donor Registry" color="bg-slate-900" />
             </div>
           )}
-
+          {user.role === 'Donor' && (
+            <div className="space-y-2 mb-4">
+              <NavButton tab="schedule" icon={CalendarDays} label="Donation Timeline" color="bg-red-600" />
+              <NavButton tab="eligibility" icon={Stethoscope} label="Health Scanner" color="bg-indigo-600" />
+            </div>
+          )}
           <div className="space-y-2">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-4 mb-2 mt-4">Global Network</h3>
             <NavButton tab="feed" icon={LayoutDashboard} label="Operations Feed" color="bg-red-600" />
             <NavButton tab="scanner" icon={Radar} label="Nearby Scanner" color="bg-slate-900" />
             <NavButton tab="drives" icon={Globe} label="Community Drives" color="bg-slate-900" />
+            <NavButton tab="leaderboard" icon={Trophy} label="Leaderboard" color="bg-amber-500" />
           </div>
-          
           <div className="flex-grow"></div>
           <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl font-bold text-slate-400 hover:text-red-600 transition-all"><LogOut className="w-5 h-5" />Logout</button>
         </nav>
 
         <section className="md:col-span-9">
-          {activeTab === 'new-request' && <HospitalRequestForm hospitalName={user.name} onSubmit={handleCreateRequest} />}
-          {activeTab === 'my-stock' && (
-            <StockManagement 
-              bankName={user.name} 
-              initialInventory={{
-                'A+': 0, 'A-': 0, 'B+': 0, 'B-': 0, 'AB+': 0, 'AB-': 0, 'O+': 0, 'O-': 0
-              }} 
-              initialPlatelets={0} 
-            />
-          )}
-          {activeTab === 'donor-db' && <DonorDatabase userLocation={userLocation} />}
-          {activeTab === 'feed' && <EmergencyFeed requests={allRequests} onMatch={setSelectedRequest} dengueMode={false} userLocation={userLocation} />}
+          {activeTab === 'feed' && <EmergencyFeed requests={allRequests} onMatch={setSelectedRequest} dengueMode={false} userLocation={userLocation} user={user} />}
           {activeTab === 'scanner' && <NearbyScanner initialLocation={userLocation} />}
           {activeTab === 'drives' && <BloodDriveList onNotify={addNotification} user={user} initialLocation={userLocation} />}
+          {activeTab === 'new-request' && <HospitalRequestForm hospitalName={user.name} onSubmit={handleCreateRequest} />}
+          {activeTab === 'register-donor' && <DonorRegistrationForm onRegister={(data) => { backendService.saveDonor(data); setActiveTab('feed'); addNotification('Successfully registered as a lifesaver!', 'success'); }} />}
+          {activeTab === 'my-stock' && <StockManagement bankId={user.id} bankName={user.name} />}
+          {activeTab === 'donor-db' && <DonorDatabase bankId={user.id} userLocation={userLocation} />}
+          {activeTab === 'allocation' && <BloodAllocation bankId={user.id} bankName={user.name} />}
+          {activeTab === 'collection' && <BloodCollection bankId={user.id} bankName={user.name} userLocation={userLocation} />}
+          {activeTab === 'schedule' && <DonationSchedule lastDonationDate="2024-11-20" bloodType="O-" onNavigateToDrives={() => setActiveTab('drives')} />}
+          {activeTab === 'eligibility' && <EligibilityChecker onVerified={(advice) => addNotification(`Health Assessment: ${advice}`, 'info')} />}
+          {activeTab === 'leaderboard' && <Leaderboard userLocation={userLocation} />}
         </section>
       </main>
 

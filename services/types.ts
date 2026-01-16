@@ -14,7 +14,9 @@ export interface Donor {
   age: number;
   bloodType: BloodType;
   lastDonation: string;
-  distance: number; // in km
+  distance?: number; // legacy/calculated field
+  lat?: number;     // Latitude for live tracking
+  lng?: number;     // Longitude for live tracking
   phone: string;
   isAvailable: boolean;
   medicalHistory?: string;
@@ -27,6 +29,9 @@ export interface Donor {
   permanentAddress?: string;
   email?: string;
   password?: string;
+  createdAt?: string; // For "New" badge logic
+  lastBagId?: string;     // ID of the last blood bag donated
+  lastBagExpiry?: string; // Expiry date of the last blood bag
 }
 
 export interface AuthenticatedUser {
@@ -46,6 +51,17 @@ export interface BloodBank {
   source: 'e-Raktkosh' | 'WellSky' | 'UBLOOD' | 'Local';
   lastSync: string;
   phone: string;
+}
+
+export interface BloodBag {
+  id: string;
+  type: BloodType | 'Platelets';
+  expiryDate: string;
+  collectionDate: string;
+  source: string;
+  volume: number; // in ml
+  bankId?: string;
+  status?: 'Available' | 'Allocated' | 'Dispatched';
 }
 
 export interface BloodDrive {
@@ -72,6 +88,8 @@ export interface EmergencyRequest {
   contact: string;
   timestamp: string;
   coordinates?: { lat: number; lng: number };
+  status?: 'Pending' | 'Allocated' | 'Dispatched' | 'Fulfilled';
+  allocatedBagIds?: string[];
 }
 
 export interface AIRecommendation {

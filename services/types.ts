@@ -88,7 +88,7 @@ export interface EmergencyRequest {
   contact: string;
   timestamp: string;
   coordinates?: { lat: number; lng: number };
-  status?: 'Pending' | 'Allocated' | 'Dispatched' | 'Fulfilled';
+  status?: 'Pending' | 'Allocated' | 'Dispatched' | 'Fulfilled' | 'Received';
   allocatedBagIds?: string[];
 }
 

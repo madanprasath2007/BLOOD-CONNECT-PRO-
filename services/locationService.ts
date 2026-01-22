@@ -2,105 +2,85 @@
 export interface GeoCoords {
   latitude: number;
   longitude: number;
+  accuracy?: 'high' | 'low' | 'fixed';
 }
 
 /**
  * Calculates the distance between two points in KM using the Haversine formula.
  */
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Radius of the earth in km
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
+  const R = 6371; 
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; // Distance in km
-  return parseFloat(d.toFixed(1));
-}
-
-function deg2rad(deg: number): number {
-  return deg * (Math.PI / 180);
+  return parseFloat((R * c).toFixed(1));
 }
 
 /**
- * Fetches the current GPS coordinates with a robust fallback mechanism.
+ * ADAPTIVE GEOLOCATION ENGINE
+ * Attempts to acquire high-fidelity signal with progressive timeouts.
+ * If all hardware attempts fail, it throws an error to trigger Manual Sector Discovery.
  */
-export async function getCurrentPosition(forceLowAccuracy: boolean = false): Promise<GeoCoords> {
-  const getPosition = (highAccuracy: boolean): Promise<GeoCoords> => {
+export async function getCurrentPosition(): Promise<GeoCoords> {
+  const getPos = (high: boolean, timeout: number): Promise<GeoCoords> => {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
-        reject(new Error("Geolocation is not supported by your browser"));
+        reject(new Error("GEOLOCATION_UNSUPPORTED"));
         return;
       }
-
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-        },
-        (error) => {
-          let message = "An unknown error occurred";
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              message = "Location permission denied. Please enable location access in settings.";
-              break;
-            case error.POSITION_UNAVAILABLE:
-              message = "Location information is currently unavailable.";
-              break;
-            case error.TIMEOUT:
-              message = "Location acquisition timed out.";
-              break;
-          }
-          const err = new Error(message) as any;
-          err.code = error.code;
+        (p) => resolve({ 
+          latitude: p.coords.latitude, 
+          longitude: p.coords.longitude,
+          accuracy: high ? 'high' : 'low'
+        }),
+        (e) => {
+          const err = new Error(e.message) as any;
+          err.code = e.code;
           reject(err);
         },
         { 
-          enableHighAccuracy: highAccuracy, 
-          timeout: 20000,
-          maximumAge: 5000 
+          enableHighAccuracy: high, 
+          timeout: timeout, 
+          maximumAge: 60000 // 1 minute cache
         }
       );
     });
   };
 
   try {
-    return await getPosition(!forceLowAccuracy);
+    // Attempt 1: Fast network lock
+    return await getPos(false, 5000); 
   } catch (error: any) {
-    if ((error.code === 3 || error.code === 2) && !forceLowAccuracy) {
-      console.warn("High accuracy timed out. Falling back to standard location services...");
-      return await getPosition(false);
+    // If permission is denied, stop immediately
+    if (error.code === 1) throw new Error("PERMISSION_DENIED");
+    
+    // Attempt 2: More persistent hardware search
+    try {
+      return await getPos(true, 8000);
+    } catch (finalError) {
+      // Hardware failure/timeout: Trigger UI fallback
+      throw new Error("SATELLITE_LINK_FAILED");
     }
-    throw error;
   }
 }
 
-/**
- * Starts watching the user's position for real-time updates.
- * Optimized for 'perfect' tracking by enabling high accuracy and zero age.
- */
 export function startLocationWatch(
   onUpdate: (coords: GeoCoords) => void,
   onError: (error: Error) => void
 ): number {
-  if (!navigator.geolocation) {
-    onError(new Error("Geolocation is not supported"));
-    return -1;
-  }
+  if (!navigator.geolocation) return -1;
   return navigator.geolocation.watchPosition(
-    (pos) => onUpdate({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-    (err) => {
-      console.error("Location watch error:", err.message);
-      onError(new Error(err.message));
-    },
-    { 
-      enableHighAccuracy: true, // High accuracy for perfect tracking
-      maximumAge: 0,            // No caching, always fresh data
-      timeout: 30000            // Higher timeout for reliable locks
-    }
+    (pos) => onUpdate({ 
+      latitude: pos.coords.latitude, 
+      longitude: pos.coords.longitude,
+      accuracy: 'high'
+    }),
+    (err) => onError(new Error(err.message)),
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
   );
 }

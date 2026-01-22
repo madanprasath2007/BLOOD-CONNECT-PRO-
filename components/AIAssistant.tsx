@@ -1,8 +1,10 @@
 
 import React, { useEffect, useState } from 'react';
-import { Sparkles, X, Phone, CheckCircle, ShieldAlert, Loader2 } from 'lucide-react';
+import { Sparkles, X, Phone, CheckCircle, ShieldAlert, Loader2, UserCheck, ChevronRight } from 'lucide-react';
 import { EmergencyRequest, AIRecommendation, Donor } from '../services/types';
 import { matchDonors, getHealthGuidelines } from '../services/geminiService';
+import { backendService } from '../services/backendService';
+import { broadcastToNetwork } from '../services/networkService';
 import { MOCK_DONORS } from '../constants';
 
 interface AIProps {
@@ -12,6 +14,7 @@ interface AIProps {
 
 const AIAssistant: React.FC<AIProps> = ({ request, onClose }) => {
   const [loading, setLoading] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<AIRecommendation[]>([]);
   const [guidelines, setGuidelines] = useState('');
 
@@ -28,6 +31,23 @@ const AIAssistant: React.FC<AIProps> = ({ request, onClose }) => {
       });
     }
   }, [request]);
+
+  const handleConfirmMatch = async (donorId: string) => {
+    if (!request) return;
+    setConfirmingId(donorId);
+    
+    // Simulate clinical validation delay
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    // Core logic: Update status to Allocated
+    backendService.updateEmergencyRequestStatus(request.id, 'Allocated');
+    
+    // Ensure network broadast is triggered (Service does this, but we force refresh)
+    broadcastToNetwork({ type: 'DATA_CHANGE', payload: { entity: 'emergency_requests' } });
+    
+    setConfirmingId(null);
+    onClose();
+  };
 
   if (!request) return null;
 
@@ -68,30 +88,59 @@ const AIAssistant: React.FC<AIProps> = ({ request, onClose }) => {
 
               {/* Recommendations */}
               <div className="space-y-3">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">Top Compatible Donors</h3>
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Top Compatible Donors</h3>
+                  <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-full">AI Sorted</span>
+                </div>
+                
                 {recommendations.map((rec, idx) => {
                   const donor = MOCK_DONORS.find(d => d.id === rec.donorId);
                   if (!donor) return null;
+                  const isConfirming = confirmingId === donor.id;
+
                   return (
-                    <div key={rec.donorId} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 transition-all group">
-                      <div className="flex justify-between items-start">
-                        <div className="flex gap-4">
-                          <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-700 font-bold text-lg">
+                    <div key={rec.donorId} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 transition-all group">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div className="flex gap-4 flex-1">
+                          <div className="w-14 h-14 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-slate-700 font-black text-xl border-2 border-slate-100 group-hover:bg-indigo-50 group-hover:border-indigo-100 group-hover:text-indigo-600 transition-colors">
                             {donor.bloodType}
                           </div>
-                          <div>
+                          <div className="flex-1">
                             <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-slate-800">{donor.name}</h4>
-                              <div className="bg-indigo-100 text-indigo-700 text-[9px] px-1.5 py-0.5 rounded font-bold">
+                              <h4 className="font-black text-slate-800 text-sm uppercase tracking-tight">{donor.name}</h4>
+                              <div className="bg-indigo-100 text-indigo-700 text-[9px] px-2 py-0.5 rounded-full font-black">
                                 {rec.priorityScore}% MATCH
                               </div>
                             </div>
-                            <p className="text-[11px] text-slate-500 font-medium mt-1">{donor.distance} km away • {rec.reason}</p>
+                            <p className="text-[11px] text-slate-500 font-medium mt-1 leading-relaxed">
+                              {donor.distance} km away • {rec.reason}
+                            </p>
                           </div>
                         </div>
-                        <a href={`tel:${donor.phone}`} className="p-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200">
-                          <Phone className="w-4 h-4" />
-                        </a>
+                        
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <a 
+                            href={`tel:${donor.phone}`} 
+                            className="p-3.5 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-900 hover:text-white transition-all shadow-sm active:scale-95"
+                            title="Contact Donor"
+                          >
+                            <Phone className="w-4 h-4" />
+                          </a>
+                          <button 
+                            onClick={() => handleConfirmMatch(donor.id)}
+                            disabled={!!confirmingId}
+                            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.15em] hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 disabled:opacity-50 min-w-[140px]`}
+                          >
+                            {isConfirming ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <>
+                                <UserCheck className="w-4 h-4" />
+                                Confirm Match
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -101,7 +150,7 @@ const AIAssistant: React.FC<AIProps> = ({ request, onClose }) => {
               <div className="pt-2">
                 <button 
                   onClick={onClose}
-                  className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+                  className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-2"
                 >
                   Dismiss Assistant
                 </button>

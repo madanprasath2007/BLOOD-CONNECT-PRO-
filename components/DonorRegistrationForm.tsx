@@ -45,7 +45,8 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
 
   // Attempt to capture location on component mount for auto-filling coordinates
   useEffect(() => {
-    getCurrentPosition(true).then(coords => {
+    // Removed legacy boolean argument from getCurrentPosition call
+    getCurrentPosition().then(coords => {
       setFormData(prev => ({ ...prev, lat: coords.latitude, lng: coords.longitude }));
     }).catch(() => {
       console.warn("Could not capture registration coordinates automatically.");
@@ -94,7 +95,8 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
     // Final attempt to get fresh location if not already present
     if (!formData.lat) {
       try {
-        const coords = await getCurrentPosition(true);
+        // Removed legacy boolean argument from getCurrentPosition call
+        const coords = await getCurrentPosition();
         formData.lat = coords.latitude;
         formData.lng = coords.longitude;
       } catch (e) {
@@ -186,6 +188,7 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
               ) : (
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="w-full max-w-[240px] h-32 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 transition-all"><Camera className="w-8 h-8 text-slate-300 group-hover:text-red-500 transition-all" /><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Scan Aadhaar for Auto-fill</span></button>
               )}
+              {/* Corrected ref prop */}
               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleIdUpload} />
             </div>
           </div>
@@ -241,11 +244,13 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Confirm Access Key</label>
                 <div className="relative">
                   <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmAccessKey: e.target.value})} />
+                  {/* Corrected field mapping for confirmPassword */}
+                  <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})} />
                 </div>
               </div>
             </div>
-            {formData.confirmAccessKey && (
+            {/* Corrected field mapping for confirmPassword */}
+            {formData.confirmPassword && (
               <div className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ml-1 ${keysMatch ? 'text-emerald-600' : 'text-red-500'}`}>
                 {keysMatch ? <><CheckCircle2 className="w-3 h-3" /> Keys Synchronized</> : <><AlertCircle className="w-3 h-3" /> Keys Must Match</>}
               </div>

@@ -17,25 +17,19 @@ import {
   ChevronRight,
   Search,
   CheckCircle2,
-  Loader2
+  Loader2,
+  Edit3,
+  Check
 } from 'lucide-react';
-import { BloodType } from '../services/types';
+import { BloodType, BloodBag } from '../services/types';
 import { backendService } from '../services/backendService';
-
-interface BloodBag {
-  id: string;
-  type: BloodType | 'Platelets';
-  expiryDate: string;
-  collectionDate: string;
-  source: string;
-  volume: number; // in ml
-  bankId?: string;
-}
 
 interface StockManagementProps {
   bankId: string;
   bankName: string;
 }
+
+const BLOOD_TYPES: BloodType[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) => {
   const [bags, setBags] = useState<BloodBag[]>([]);
@@ -44,6 +38,10 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleTimeString());
   const [isRegistering, setIsRegistering] = useState<BloodType | 'Platelets' | null>(null);
   const [viewMode, setViewMode] = useState<'aggregate' | 'ledger'>('aggregate');
+  
+  // Quick Edit State
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedCounts, setEditedCounts] = useState<Record<string, number>>({});
 
   // Modal Form State
   const [newBagData, setNewBagData] = useState({
@@ -61,7 +59,6 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
     setIsLoading(true);
     setTimeout(() => {
       const allBags = backendService.getBloodBags();
-      // Filter bags for this specific bank
       const bankBags = allBags.filter(b => b.bankId === bankId || !b.bankId);
       setBags(bankBags);
       setIsLoading(false);
@@ -70,13 +67,19 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
 
   const aggregateCounts = useMemo(() => {
     const counts: Record<string, number> = { 'Platelets': 0 };
-    ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].forEach(t => counts[t] = 0);
+    BLOOD_TYPES.forEach(t => counts[t] = 0);
     
     bags.forEach(bag => {
       counts[bag.type] = (counts[bag.type] || 0) + 1;
     });
     return counts;
   }, [bags]);
+
+  useEffect(() => {
+    if (isEditing) {
+      setEditedCounts({ ...aggregateCounts });
+    }
+  }, [isEditing, aggregateCounts]);
 
   const handleRegisterBag = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +92,8 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
       expiryDate: newBagData.expiryDate,
       source: newBagData.source,
       volume: isRegistering === 'Platelets' ? 250 : 350,
-      bankId: bankId
+      bankId: bankId,
+      status: 'Available'
     };
 
     backendService.saveBloodBag(newBag);
@@ -105,12 +109,47 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
     }
   };
 
-  const handleSave = () => {
+  const handleBulkAdjust = async () => {
     setIsSaving(true);
+    
+    // Reconciliation Logic
+    const typesToProcess = [...BLOOD_TYPES, 'Platelets'];
+    
+    for (const type of typesToProcess) {
+      const target = editedCounts[type] || 0;
+      const current = aggregateCounts[type] || 0;
+      const delta = target - current;
+
+      if (delta > 0) {
+        // Add generic bags to match count
+        for (let i = 0; i < delta; i++) {
+          const newBag: BloodBag = {
+            id: `ADJ-${type}-${Date.now().toString().slice(-4)}-${i}`,
+            type: type as any,
+            collectionDate: new Date().toISOString().split('T')[0],
+            expiryDate: new Date(Date.now() + 35 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            source: 'Manual Adjustment',
+            volume: type === 'Platelets' ? 250 : 350,
+            bankId: bankId,
+            status: 'Available'
+          };
+          backendService.saveBloodBag(newBag);
+        }
+      } else if (delta < 0) {
+        // Remove oldest available bags to match count
+        const bagsOfType = bags.filter(b => b.type === type && b.status === 'Available');
+        const sortedBags = [...bagsOfType].sort((a, b) => new Date(a.collectionDate).getTime() - new Date(b.collectionDate).getTime());
+        const toRemove = sortedBags.slice(0, Math.abs(delta));
+        toRemove.forEach(b => backendService.removeBloodBag(b.id));
+      }
+    }
+
     setTimeout(() => {
+      loadInventory();
+      setIsEditing(false);
       setIsSaving(false);
       setLastUpdated(new Date().toLocaleTimeString());
-    }, 1200);
+    }, 1000);
   };
 
   const getDaysRemaining = (expiry: string) => {
@@ -142,45 +181,71 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
               </div>
             </div>
             
-            <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-              <button 
-                onClick={() => setViewMode('aggregate')}
-                className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'aggregate' ? 'bg-white text-slate-900' : 'text-slate-400'}`}
-              >
-                Dashboard
-              </button>
-              <button 
-                onClick={() => setViewMode('ledger')}
-                className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'ledger' ? 'bg-white text-slate-900' : 'text-slate-400'}`}
-              >
-                Unit Ledger
-              </button>
+            <div className="flex items-center gap-3">
+              <div className="flex bg-white/5 p-1 rounded-xl border border-white/10 mr-2">
+                <button 
+                  onClick={() => { setViewMode('aggregate'); setIsEditing(false); }}
+                  className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'aggregate' && !isEditing ? 'bg-white text-slate-900' : 'text-slate-400'}`}
+                >
+                  Dashboard
+                </button>
+                <button 
+                  onClick={() => { setViewMode('ledger'); setIsEditing(false); }}
+                  className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'ledger' ? 'bg-white text-slate-900' : 'text-slate-400'}`}
+                >
+                  Unit Ledger
+                </button>
+              </div>
+              
+              {viewMode === 'aggregate' && (
+                <button 
+                  onClick={() => setIsEditing(!isEditing)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg ${isEditing ? 'bg-amber-500 text-white animate-pulse' : 'bg-white/10 text-white hover:bg-white/20 border border-white/10'}`}
+                >
+                  {isEditing ? <X className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+                  {isEditing ? 'Cancel Edit' : 'Quick Adjust'}
+                </button>
+              )}
             </div>
           </div>
 
           {viewMode === 'aggregate' ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-in fade-in duration-300">
-              {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((type) => (
+              {BLOOD_TYPES.map((type) => (
                 <div key={type} className={`p-5 rounded-3xl border transition-all ${aggregateCounts[type] < 5 ? 'bg-red-500/10 border-red-500/30 ring-2 ring-red-500/20' : 'bg-white/5 border-white/10'}`}>
                   <div className="flex justify-between items-start mb-4">
                     <span className="text-sm font-black text-slate-300">{type}</span>
                     {aggregateCounts[type] < 5 && <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" />}
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-4xl font-black">{aggregateCounts[type]}</span>
-                    <button 
-                      onClick={() => setIsRegistering(type as BloodType)}
-                      className="p-2 bg-white/10 hover:bg-red-600 rounded-xl transition-all group"
-                    >
-                      <Plus className="w-4 h-4 text-white group-hover:scale-110" />
-                    </button>
+                    {isEditing ? (
+                      <input 
+                        type="number"
+                        min="0"
+                        className="w-full bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-2xl font-black text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        value={editedCounts[type] || 0}
+                        onChange={(e) => setEditedCounts({ ...editedCounts, [type]: parseInt(e.target.value) || 0 })}
+                      />
+                    ) : (
+                      <>
+                        <span className="text-4xl font-black">{aggregateCounts[type]}</span>
+                        <button 
+                          onClick={() => setIsRegistering(type)}
+                          className="p-2 bg-white/10 hover:bg-red-600 rounded-xl transition-all group"
+                        >
+                          <Plus className="w-4 h-4 text-white group-hover:scale-110" />
+                        </button>
+                      </>
+                    )}
                   </div>
-                  <div className="mt-4 h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all ${aggregateCounts[type] < 5 ? 'bg-red-500' : 'bg-emerald-500'}`} 
-                      style={{width: `${Math.min(100, aggregateCounts[type] * 5)}%`}}
-                    ></div>
-                  </div>
+                  {!isEditing && (
+                    <div className="mt-4 h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all ${aggregateCounts[type] < 5 ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                        style={{width: `${Math.min(100, aggregateCounts[type] * 5)}%`}}
+                      ></div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -239,9 +304,9 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
             </div>
           )}
 
-          <div className="mt-6 p-6 bg-white/5 rounded-3xl border border-white/10 flex items-center justify-between">
+          <div className={`mt-6 p-6 rounded-3xl border flex items-center justify-between transition-all ${isEditing ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'}`}>
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-amber-500/20 rounded-2xl flex items-center justify-center text-amber-500">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${isEditing ? 'bg-amber-500 text-white' : 'bg-amber-500/20 text-amber-500'}`}>
                 <History className="w-7 h-7" />
               </div>
               <div>
@@ -250,13 +315,25 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
               </div>
             </div>
             <div className="flex items-center gap-6">
-               <span className="text-4xl font-black text-amber-500">{aggregateCounts['Platelets']}</span>
-               <button 
-                onClick={() => setIsRegistering('Platelets')}
-                className="w-10 h-10 bg-amber-600 rounded-xl flex items-center justify-center hover:bg-amber-700 shadow-lg shadow-amber-900/40 transition-all active:scale-95"
-               >
-                 <Plus className="w-5 h-5 text-white" />
-               </button>
+               {isEditing ? (
+                 <input 
+                  type="number"
+                  min="0"
+                  className="w-32 bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-3xl font-black text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  value={editedCounts['Platelets'] || 0}
+                  onChange={(e) => setEditedCounts({ ...editedCounts, 'Platelets': parseInt(e.target.value) || 0 })}
+                />
+               ) : (
+                 <>
+                  <span className="text-4xl font-black text-amber-500">{aggregateCounts['Platelets']}</span>
+                  <button 
+                    onClick={() => setIsRegistering('Platelets')}
+                    className="w-10 h-10 bg-amber-600 rounded-xl flex items-center justify-center hover:bg-amber-700 shadow-lg shadow-amber-900/40 transition-all active:scale-95"
+                  >
+                    <Plus className="w-5 h-5 text-white" />
+                  </button>
+                 </>
+               )}
             </div>
           </div>
         </div>
@@ -264,13 +341,23 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
       </div>
 
       <div className="flex gap-4">
-        <button 
-          onClick={handleSave}
-          disabled={isSaving}
-          className="flex-1 bg-red-600 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-2 hover:bg-red-700 transition-all shadow-xl shadow-red-200 disabled:opacity-70"
-        >
-          {isSaving ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Commit Updates to e-Raktkosh Network</>}
-        </button>
+        {isEditing ? (
+          <button 
+            onClick={handleBulkAdjust}
+            disabled={isSaving}
+            className="flex-1 bg-amber-600 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-2 hover:bg-amber-700 transition-all shadow-xl shadow-amber-200 disabled:opacity-70 animate-pulse"
+          >
+            {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Check className="w-5 h-5" /> Commit Manual Adjustments</>}
+          </button>
+        ) : (
+          <button 
+            onClick={() => { setIsSaving(true); setTimeout(() => setIsSaving(false), 1200); }}
+            disabled={isSaving}
+            className="flex-1 bg-red-600 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-2 hover:bg-red-700 transition-all shadow-xl shadow-red-200 disabled:opacity-70"
+          >
+            {isSaving ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Synchronize Local Inventory</>}
+          </button>
+        )}
         <button onClick={loadInventory} className="px-8 bg-white border border-slate-200 rounded-2xl text-slate-500 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">
           Sync Global
         </button>
@@ -392,7 +479,7 @@ const StockManagement: React.FC<StockManagementProps> = ({ bankId, bankName }) =
         <div>
           <h4 className="text-xs font-black text-emerald-800 uppercase tracking-widest mb-1">Institutional Compliance Active</h4>
           <p className="text-[11px] text-emerald-700 font-medium leading-relaxed">
-            Every unit registered in this ledger is cryptographically linked to your medical license. Any manual adjustment is logged for clinical audit. Cross-match every bag physical tag with its digital twin before dispatch.
+            Every unit registered in this ledger is cryptographically linked to your medical license. Quick adjustments are logged as manual overrides for state audit compliance.
           </p>
         </div>
       </div>

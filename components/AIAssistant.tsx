@@ -61,7 +61,7 @@ const AIAssistant: React.FC<AIProps> = ({ request, onClose }) => {
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-slate-800">Red Connect AI</h2>
+                <h2 className="text-lg font-bold text-slate-800">Red Command AI</h2>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gemini 3 Pro Matchmaking</p>
               </div>
             </div>

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { UserPlus, User, Mail, Droplets, Phone, MapPin, ShieldCheck, Activity, Lock, AlertCircle, Camera, Trash2, ArrowRight, ChevronRight, KeyRound, Loader2, RefreshCw, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { UserPlus, User, Mail, Droplets, Phone, MapPin, ShieldCheck, Activity, Lock, AlertCircle, Camera, Trash2, ArrowRight, ChevronRight, KeyRound, Loader2, RefreshCw, Eye, EyeOff, CheckCircle2, Calendar } from 'lucide-react';
 import { BloodType } from '../services/types';
 import { extractLicenseDetails } from '../services/geminiService';
 import { backendService } from '../services/backendService';
@@ -15,6 +15,7 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
   const [showKey, setShowKey] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
+    age: '',
     email: '',
     password: '',
     confirmPassword: '',
@@ -43,15 +44,43 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
     return () => clearInterval(timer);
   }, [cooldown]);
 
-  // Attempt to capture location on component mount for auto-filling coordinates
   useEffect(() => {
-    // Removed legacy boolean argument from getCurrentPosition call
     getCurrentPosition().then(coords => {
       setFormData(prev => ({ ...prev, lat: coords.latitude, lng: coords.longitude }));
     }).catch(() => {
       console.warn("Could not capture registration coordinates automatically.");
     });
   }, []);
+
+  const calculateAge = (dobStr: string): string => {
+    if (!dobStr) return "";
+    let birthDate: Date;
+    
+    // Try parsing DD/MM/YYYY
+    if (dobStr.includes('/')) {
+      const parts = dobStr.split('/');
+      if (parts.length === 3) {
+        const d = parseInt(parts[0]);
+        const m = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        birthDate = new Date(y, m - 1, d);
+      } else {
+        birthDate = new Date(dobStr);
+      }
+    } else {
+      birthDate = new Date(dobStr);
+    }
+
+    if (isNaN(birthDate.getTime())) return "";
+
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age.toString();
+  };
 
   const handleIdUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,19 +90,25 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
       const base64 = reader.result as string;
       setFormData(prev => ({ ...prev, profilePicture: base64 }));
       setIsScanning(true);
+      setError(null);
       try {
         const details = await extractLicenseDetails(base64);
         if (details) {
+          const calculatedAge = details.date_of_birth ? calculateAge(details.date_of_birth) : (details.age?.toString() || "");
+          
           setFormData(prev => ({
             ...prev,
             name: details.full_name || prev.name,
-            idNumber: details.license_number || prev.idNumber,
+            age: calculatedAge || prev.age,
+            phone: details.mobile_number || prev.phone,
+            idNumber: details.id_number || details.license_number || prev.idNumber,
             permanentAddress: details.address || prev.permanentAddress
           }));
           setIdVerified(true);
         }
       } catch (err) {
         console.error("Verification failed", err);
+        setError("AI Scanning failed. Please enter details manually.");
       } finally {
         setIsScanning(false);
       }
@@ -89,18 +124,21 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
       setError("Security Access Keys do not match.");
       return;
     }
+    if (!formData.age || parseInt(formData.age) < 18) {
+      setError("Donors must be at least 18 years old.");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
-    // Final attempt to get fresh location if not already present
     if (!formData.lat) {
       try {
-        // Removed legacy boolean argument from getCurrentPosition call
         const coords = await getCurrentPosition();
         formData.lat = coords.latitude;
         formData.lng = coords.longitude;
       } catch (e) {
-        // Proceed anyway, address is required
+        // Fallback or ignore
       }
     }
 
@@ -126,7 +164,12 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
       const res = await backendService.verifyOtp(formData.email, otp);
       if (res.success) {
         const { confirmPassword, ...dataToSave } = formData;
-        onRegister({ ...dataToSave, idVerified, createdAt: new Date().toISOString() });
+        onRegister({ 
+          ...dataToSave, 
+          age: parseInt(formData.age) || 18,
+          idVerified, 
+          createdAt: new Date().toISOString() 
+        });
       } else {
         setError(res.message);
       }
@@ -172,7 +215,7 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
       {step === 'details' ? (
         <form onSubmit={handleInitialSubmit} className="space-y-6">
           <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2rem] p-6 text-center group hover:bg-white hover:border-red-400 transition-all">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Aadhaar ID Card Scan (Optional)</h3>
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Aadhaar ID Card Scan</h3>
             <div className="flex flex-col items-center justify-center">
               {formData.profilePicture ? (
                 <div className="relative">
@@ -188,7 +231,6 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
               ) : (
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="w-full max-w-[240px] h-32 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 transition-all"><Camera className="w-8 h-8 text-slate-300 group-hover:text-red-500 transition-all" /><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Scan Aadhaar for Auto-fill</span></button>
               )}
-              {/* Corrected ref prop */}
               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleIdUpload} />
             </div>
           </div>
@@ -202,7 +244,7 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="group">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Blood Type</label>
                 <div className="relative">
@@ -213,11 +255,26 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
                 </div>
               </div>
               <div className="group">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Age</label>
+                <div className="relative">
+                  <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input type="number" required placeholder="18+" min="18" className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm" value={formData.age} onChange={(e) => setFormData({...formData, age: e.target.value})} />
+                </div>
+              </div>
+              <div className="group">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Mobile</label>
                 <div className="relative">
                   <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input type="tel" required placeholder="+91..." className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
                 </div>
+              </div>
+            </div>
+
+            <div className="group">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Permanent Address</label>
+              <div className="relative">
+                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input type="text" required placeholder="Address as per Aadhaar" className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm" value={formData.permanentAddress} onChange={(e) => setFormData({...formData, permanentAddress: e.target.value})} />
               </div>
             </div>
 
@@ -244,12 +301,10 @@ const DonorRegistrationForm: React.FC<DonorRegistrationFormProps> = ({ onRegiste
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Confirm Access Key</label>
                 <div className="relative">
                   <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  {/* Corrected field mapping for confirmPassword */}
                   <input type={showKey ? "text" : "password"} required placeholder="••••••••" className={`w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all font-bold text-slate-800 text-sm ${keysMatch ? 'border-emerald-500 bg-emerald-50/20' : ''}`} value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})} />
                 </div>
               </div>
             </div>
-            {/* Corrected field mapping for confirmPassword */}
             {formData.confirmPassword && (
               <div className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ml-1 ${keysMatch ? 'text-emerald-600' : 'text-red-500'}`}>
                 {keysMatch ? <><CheckCircle2 className="w-3 h-3" /> Keys Synchronized</> : <><AlertCircle className="w-3 h-3" /> Keys Must Match</>}

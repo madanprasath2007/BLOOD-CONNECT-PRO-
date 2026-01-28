@@ -22,8 +22,7 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
 
 /**
  * ADAPTIVE GEOLOCATION ENGINE
- * Attempts to acquire high-fidelity signal with progressive timeouts.
- * If all hardware attempts fail, it throws an error to trigger Manual Sector Discovery.
+ * Specifically catches "Permissions Policy" errors to trigger Semantic Discovery.
  */
 export async function getCurrentPosition(): Promise<GeoCoords> {
   const getPos = (high: boolean, timeout: number): Promise<GeoCoords> => {
@@ -32,38 +31,54 @@ export async function getCurrentPosition(): Promise<GeoCoords> {
         reject(new Error("GEOLOCATION_UNSUPPORTED"));
         return;
       }
-      navigator.geolocation.getCurrentPosition(
-        (p) => resolve({ 
-          latitude: p.coords.latitude, 
-          longitude: p.coords.longitude,
-          accuracy: high ? 'high' : 'low'
-        }),
-        (e) => {
-          const err = new Error(e.message) as any;
-          err.code = e.code;
+      
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ 
+            latitude: p.coords.latitude, 
+            longitude: p.coords.longitude,
+            accuracy: high ? 'high' : 'low'
+          }),
+          (e) => {
+            const msg = e.message.toLowerCase();
+            if (msg.includes('policy') || msg.includes('disabled')) {
+              reject(new Error("POLICY_RESTRICTED"));
+            } else if (e.code === 1) {
+              reject(new Error("PERMISSION_DENIED"));
+            } else {
+              reject(new Error("SIGNAL_TIMEOUT"));
+            }
+          },
+          { 
+            enableHighAccuracy: high, 
+            timeout: timeout, 
+            maximumAge: 60000 // 1 minute cache
+          }
+        );
+      } catch (err: any) {
+        const msg = err.message?.toLowerCase() || '';
+        if (err.name === 'SecurityError' || msg.includes('policy')) {
+          reject(new Error("POLICY_RESTRICTED"));
+        } else {
           reject(err);
-        },
-        { 
-          enableHighAccuracy: high, 
-          timeout: timeout, 
-          maximumAge: 60000 // 1 minute cache
         }
-      );
+      }
     });
   };
 
   try {
-    // Attempt 1: Fast network lock
-    return await getPos(false, 5000); 
+    // Stage 1: Fast network triangulation
+    return await getPos(false, 3500); 
   } catch (error: any) {
-    // If permission is denied, stop immediately
-    if (error.code === 1) throw new Error("PERMISSION_DENIED");
+    if (error.message === "POLICY_RESTRICTED" || error.message === "PERMISSION_DENIED") {
+      throw error;
+    }
     
-    // Attempt 2: More persistent hardware search
+    // Stage 2: Precision hardware retry
     try {
-      return await getPos(true, 8000);
-    } catch (finalError) {
-      // Hardware failure/timeout: Trigger UI fallback
+      return await getPos(true, 6000);
+    } catch (finalError: any) {
+      if (finalError.message === "POLICY_RESTRICTED") throw finalError;
       throw new Error("SATELLITE_LINK_FAILED");
     }
   }
@@ -74,13 +89,22 @@ export function startLocationWatch(
   onError: (error: Error) => void
 ): number {
   if (!navigator.geolocation) return -1;
-  return navigator.geolocation.watchPosition(
-    (pos) => onUpdate({ 
-      latitude: pos.coords.latitude, 
-      longitude: pos.coords.longitude,
-      accuracy: 'high'
-    }),
-    (err) => onError(new Error(err.message)),
-    { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
-  );
+  try {
+    return navigator.geolocation.watchPosition(
+      (pos) => onUpdate({ 
+        latitude: pos.coords.latitude, 
+        longitude: pos.coords.longitude,
+        accuracy: 'high'
+      }),
+      (err) => {
+        const msg = err.message.toLowerCase();
+        if (!msg.includes('policy') && !msg.includes('disabled')) {
+          onError(new Error(err.message));
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+    );
+  } catch (e) {
+    return -1;
+  }
 }

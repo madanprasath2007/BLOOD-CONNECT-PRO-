@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageSquare, X, Send, Sparkles, Loader2, User, Bot, MessageSquareQuote } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, User, Bot, MessageSquareQuote, ShieldAlert } from 'lucide-react';
 import { createAIChatSession } from '../services/geminiService';
 import { Chat, GenerateContentResponse } from '@google/genai';
 
@@ -10,11 +9,16 @@ interface ChatMessage {
   text: string;
 }
 
-const ChatBot: React.FC = () => {
+interface ChatBotProps {
+  currentTab: string;
+  contextSummary?: string;
+}
+
+const ChatBot: React.FC<ChatBotProps> = ({ currentTab, contextSummary }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: '1', role: 'ai', text: 'Hello! I am your Red Connect AI Concierge. How can I assist you with blood donation or coordination today?' }
+    { id: '1', role: 'ai', text: 'Hello! I am your Red Command AI Concierge. How can I assist you with clinical coordination or donor logistics today?' }
   ]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatSession, setChatSession] = useState<Chat | null>(null);
@@ -29,6 +33,14 @@ const ChatBot: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+  // If the user switches tabs, we reset the session to refresh the AI's "sight" (context)
+  useEffect(() => {
+    if (chatSession) {
+      setChatSession(null); 
+      // Keep message history but next message will re-init with new SITREP
+    }
+  }, [currentTab]);
+
   const handleSendMessage = async (e?: React.FormEvent, presetMessage?: string) => {
     e?.preventDefault();
     const textToSend = presetMessage || input;
@@ -41,7 +53,9 @@ const ChatBot: React.FC = () => {
 
     let session = chatSession;
     if (!session) {
-      session = createAIChatSession();
+      // Initialize session with current view context SITREP
+      const sitrep = `User is viewing the "${currentTab}" tab. ${contextSummary || ""}`;
+      session = createAIChatSession(sitrep);
       setChatSession(session);
     }
 
@@ -97,6 +111,18 @@ const ChatBot: React.FC = () => {
             <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X className="w-5 h-5" /></button>
           </div>
 
+          {/* CONTEXT STATUS BAR */}
+          <div className="bg-indigo-600 px-6 py-2 flex items-center justify-between">
+             <div className="flex items-center gap-2">
+                <ShieldAlert className="w-3 h-3 text-indigo-200" />
+                <span className="text-[8px] font-black text-white uppercase tracking-widest">SITREP Synchronized: {currentTab}</span>
+             </div>
+             <div className="flex gap-0.5">
+                <div className="w-0.5 h-1.5 bg-indigo-300 rounded-full"></div>
+                <div className="w-0.5 h-1.5 bg-indigo-100 rounded-full animate-pulse"></div>
+             </div>
+          </div>
+
           <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-hide bg-slate-50/30">
             {messages.map((msg) => (
               <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
@@ -127,7 +153,6 @@ const ChatBot: React.FC = () => {
         </div>
       )}
 
-      {/* NEW AI CHATBOT LOGO (RED ROUNDED SQUARE) */}
       <button 
         onClick={() => setIsOpen(!isOpen)}
         className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-2xl transition-all hover:scale-110 active:scale-95 group bg-red-600 border-2 border-white text-white ${isOpen ? 'rotate-90' : ''}`}

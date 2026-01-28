@@ -12,10 +12,6 @@ const DB_KEYS = {
   OTP_STORE: 'redconnect_otp_relay'
 };
 
-/**
- * Simple Security Obfuscation Layer
- * For simulation purposes, replaces plaintext storage with encoded strings.
- */
 const SecureVault = {
   encode: (val: string) => btoa(val),
   decode: (val: string) => {
@@ -36,7 +32,6 @@ class BackendService {
   private initializeDB() {
     const init = (key: string, defaultData: any) => {
       if (!localStorage.getItem(key)) {
-        // Obfuscate sensitive fields in mock data before first storage
         const obfuscated = defaultData.map((d: any) => ({
           ...d,
           password: d.password ? SecureVault.encode(d.password) : undefined,
@@ -52,10 +47,6 @@ class BackendService {
     init(DB_KEYS.BAGS, []);
   }
 
-  /**
-   * PII Data Purge
-   * Clears high-risk data like Aadhaar scans from memory/storage.
-   */
   public purgeSessionData() {
     const donors = this.getDonors().map(d => ({ ...d, profilePicture: undefined, idNumber: undefined }));
     localStorage.setItem(DB_KEYS.DONORS, JSON.stringify(donors));
@@ -115,7 +106,6 @@ class BackendService {
     this.notifyNetwork('donors');
   }
 
-  // FIX: Added deleteDonor method used by DonorDatabase.tsx
   deleteDonor(id: string) {
     const donors = this.getDonors().filter(d => d.id !== id);
     localStorage.setItem(DB_KEYS.DONORS, JSON.stringify(donors));
@@ -150,7 +140,16 @@ class BackendService {
     const bagId = `BAG-${Date.now().toString().slice(-6)}`;
     const collectionDate = new Date().toISOString().split('T')[0];
     const expiryDate = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const newBag: BloodBag = { id: bagId, type: bloodType, collectionDate, expiryDate, source: `Donation: ${donorId}`, volume: units, bankId, status: 'Available' };
+    const newBag: BloodBag = { 
+      id: bagId, 
+      type: bloodType, 
+      collectionDate, 
+      expiryDate, 
+      source: `Donation: ${donorId}`, 
+      volume: units, 
+      bankId, 
+      status: 'Available' 
+    };
     this.saveBloodBag(newBag);
     const donors = this.getDonors();
     const dIdx = donors.findIndex(d => d.id === donorId);

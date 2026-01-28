@@ -14,24 +14,24 @@ export interface Donor {
   age: number;
   bloodType: BloodType;
   lastDonation: string;
-  distance?: number; // legacy/calculated field
-  lat?: number;     // Latitude for live tracking
-  lng?: number;     // Longitude for live tracking
+  distance?: number;
+  lat?: number;
+  lng?: number;
   phone: string;
   isAvailable: boolean;
   medicalHistory?: string;
   lastHealthCheck?: string;
   idNumber?: string;
   idVerified?: boolean;
-  profilePicture?: string; // base64 or URL
-  unitsDonatedYear?: number; // Total units in last 12 months
-  donationCount?: number;     // Total career donations
+  profilePicture?: string;
+  unitsDonatedYear?: number;
+  donationCount?: number;
   permanentAddress?: string;
   email?: string;
   password?: string;
-  createdAt?: string; // For "New" badge logic
-  lastBagId?: string;     // ID of the last blood bag donated
-  lastBagExpiry?: string; // Expiry date of the last blood bag
+  createdAt?: string;
+  lastBagId?: string;
+  lastBagExpiry?: string;
 }
 
 export interface AuthenticatedUser {
@@ -61,7 +61,7 @@ export interface BloodBag {
   source: string;
   volume: number; // in ml
   bankId?: string;
-  status?: 'Available' | 'Allocated' | 'Dispatched';
+  status: 'Available' | 'Allocated' | 'Dispatched';
 }
 
 export interface BloodDrive {

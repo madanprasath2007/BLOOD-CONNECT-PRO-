@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Droplet, Mail, Lock, ChevronRight, User, Building2, Landmark, ShieldCheck, ArrowLeft, AlertCircle, Loader2, Sparkles } from 'lucide-react';
 import { UserRole, AuthenticatedUser, Donor } from '../services/types';
@@ -120,7 +121,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
               <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-xl shadow-red-900/20">
                 <Droplet className="w-7 h-7 text-white" />
               </div>
-              <h1 className="text-2xl font-black tracking-tight uppercase">RED CONNECT<span className="text-red-500">PRO</span></h1>
+              <h1 className="text-2xl font-black tracking-tight uppercase">RED COMMAND<span className="text-red-500">PRO</span></h1>
             </div>
             
             <div className="space-y-8">

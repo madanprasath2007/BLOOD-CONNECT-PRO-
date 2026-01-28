@@ -3,17 +3,19 @@ import { GoogleGenAI, Type, Chat, Modality } from "@google/genai";
 import { Donor, EmergencyRequest, AIRecommendation } from './types';
 
 /**
- * Tactical Retry Logic
+ * Tactical Retry Logic with Exponential Backoff
  */
-async function executeWithRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+async function executeWithRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
   let lastError: any;
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (err: any) {
       lastError = err;
+      // Handle rate limits (429) or internal errors (500/503)
       if (err.status === 429 || err.status >= 500) {
-        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+        await new Promise(r => setTimeout(r, delay));
         continue;
       }
       throw err;
@@ -26,8 +28,14 @@ export async function matchDonors(request: EmergencyRequest, availableDonors: Do
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   return executeWithRetry(async () => {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: `Match top 3 donors for ${request.bloodType} at ${request.hospital}. Available: ${JSON.stringify(availableDonors.map(d => ({id: d.id, type: d.bloodType, dist: d.distance})))}`,
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        parts: [{
+          text: `You are a medical logistics coordinator. Match the top 3 most compatible donors for a blood request.
+          Request Details: ${request.bloodType} needed at ${request.hospital}.
+          Available Donor Pool: ${JSON.stringify(availableDonors.map(d => ({id: d.id, type: d.bloodType, dist: d.distance})))}`
+        }]
+      }],
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -53,7 +61,11 @@ export async function getLogisticBriefing(hospital: string, destination: string)
   return executeWithRetry(async () => {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Professional logistics brief for blood transport from ${hospital} to ${destination} in Tamil Nadu.`,
+      contents: [{
+        parts: [{
+          text: `Provide a professional, concise clinical logistics briefing for transporting blood units from ${hospital} to ${destination} in Tamil Nadu. Mention potential state highway routes or transport requirements.`
+        }]
+      }],
       config: { tools: [{ googleSearch: {} }] }
     });
     return {
@@ -65,148 +77,198 @@ export async function getLogisticBriefing(hospital: string, destination: string)
 
 export async function speakEmergencyAlert(text: string): Promise<Uint8Array | null> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-    },
+  return executeWithRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+      },
+    });
+    const data = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (data) {
+      const binaryString = atob(data);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    }
+    return null;
   });
-  const data = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (data) {
-    const binary = atob(data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
-  return null;
 }
 
 export async function verifyClinicalEligibility(formData: any): Promise<{ eligible: boolean; reason: string; advice: string }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Evaluate eligibility: ${JSON.stringify(formData)}`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          eligible: { type: Type.BOOLEAN },
-          reason: { type: Type.STRING },
-          advice: { type: Type.STRING }
+  return executeWithRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        parts: [{
+          text: `As a medical screening assistant, evaluate the following donor eligibility data according to WHO standards.
+          Data: ${JSON.stringify(formData)}`
+        }]
+      }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            eligible: { type: Type.BOOLEAN },
+            reason: { type: Type.STRING },
+            advice: { type: Type.STRING }
+          },
+          required: ["eligible", "reason", "advice"]
         }
       }
-    }
+    });
+    return JSON.parse(response.text?.trim() || '{"eligible": false, "reason": "System error during evaluation.", "advice": "Please consult a medical officer."}');
   });
-  return JSON.parse(response.text?.trim() || '{"eligible": false}');
 }
 
 export async function evaluateCollectionVitals(vitals: any): Promise<any> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Evaluate vitals for donation: ${JSON.stringify(vitals)}`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          volume: { type: Type.NUMBER },
-          status: { type: Type.STRING },
-          reason: { type: Type.STRING }
+  return executeWithRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        parts: [{
+          text: `Evaluate these donor vitals for donation safety and determine the optimal collection volume (350ml or 450ml, or 0 if blocked).
+          Vitals: ${JSON.stringify(vitals)}`
+        }]
+      }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            volume: { type: Type.NUMBER },
+            status: { type: Type.STRING, description: "OPTIMAL, STABLE, or BLOCKED" },
+            reason: { type: Type.STRING }
+          },
+          required: ["volume", "status", "reason"]
         }
       }
-    }
+    });
+    return JSON.parse(response.text?.trim() || '{"volume": 0, "status": "BLOCKED", "reason": "Evaluation failed."}');
   });
-  return JSON.parse(response.text?.trim() || '{}');
 }
 
 export async function getHealthGuidelines(isPlatelet: boolean): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Clinical guidelines for ${isPlatelet ? 'platelet' : 'blood'} donation. 3 short points.`,
+  return executeWithRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        parts: [{
+          text: `List 3 critical clinical guidelines for ${isPlatelet ? 'platelet' : 'whole blood'} donation. Concise bullet points only.`
+        }]
+      }],
+    });
+    return response.text || "Ensure donor is well-hydrated and has rested.";
   });
-  return response.text || "Follow screening protocols.";
 }
 
-/**
- * Radar Node: Optimized for State-Level Registry Discovery
- * Now explicitly references NHM Tamil Nadu portal data.
- */
 export async function findNearbyBanks(latitude: number, longitude: number, radius: number): Promise<{ chunks: any[] }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  try {
+  return executeWithRetry(async () => {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash', 
-      contents: `Identify authorized hospitals and blood banks near coordinates ${latitude}, ${longitude} in Tamil Nadu. Cross-reference with the National Health Mission (NHM) Tamil Nadu registry (nhm.tn.gov.in) to ensure validity. List official names and precise coordinates.`,
+      contents: [{
+        parts: [{
+          text: `Identify authorized hospitals and blood banks near coordinates ${latitude}, ${longitude} in Tamil Nadu. Cross-reference with the National Health Mission (NHM) Tamil Nadu registry. List official names and coordinates.`
+        }]
+      }],
       config: {
         tools: [{ googleMaps: {} }],
         toolConfig: { retrievalConfig: { latLng: { latitude, longitude } } }
       },
     });
     return { chunks: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] };
-  } catch (error) {
-    return { chunks: [] };
-  }
+  });
 }
 
 export async function searchBloodBanksByQuery(query: string): Promise<{ chunks: any[] }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  try {
+  return executeWithRetry(async () => {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Search for official medical facilities in Tamil Nadu matching "${query}". Specifically look for entries listed in the NHM Tamil Nadu hospital finder (nhm.tn.gov.in/en/for-find-hospital).`,
+      contents: [{
+        parts: [{
+          text: `Search for official medical facilities in Tamil Nadu matching "${query}". Focus on facilities listed in the NHM Tamil Nadu hospital finder.`
+        }]
+      }],
       config: { tools: [{ googleSearch: {} }] },
     });
     return { chunks: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] };
-  } catch (error) {
-    return { chunks: [] };
-  }
+  });
 }
 
-export function createAIChatSession(): Chat {
+export function createAIChatSession(viewContext?: string): Chat {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const systemInstruction = `You are the Red Command Chief Medical Officer. You provide authoritative information verified against Tamil Nadu state health registries.
+  
+  IMPORTANT - SITUATION REPORT (SITREP):
+  ${viewContext || "User is currently browsing the high-level command dashboard."}
+  
+  Use the above SITREP to answer user questions with precision. If the user asks about 'nearby' or 'current' items, refer specifically to the data in the SITREP if available.`;
+
   return ai.chats.create({
-    model: 'gemini-3-pro-preview',
-    config: { systemInstruction: 'You are the Red Connect Chief Medical Officer. You provide authoritative information verified against Tamil Nadu state health registries.' },
+    model: 'gemini-3-flash-preview',
+    config: { systemInstruction },
   });
 }
 
 export async function extractLicenseDetails(base64Image: string): Promise<any> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: base64Data } }, { text: "Extract ID info as JSON." }] },
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          full_name: { type: Type.STRING },
-          license_number: { type: Type.STRING },
-          address: { type: Type.STRING }
+  
+  return executeWithRetry(async () => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: base64Data } }, 
+          { text: "Extract identification information from this document (Aadhaar card, License, or Hospital ID). Return as JSON." } 
+        ]
+      }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            full_name: { type: Type.STRING },
+            id_number: { type: Type.STRING },
+            address: { type: Type.STRING },
+            date_of_birth: { type: Type.STRING, description: "DOB in ISO format or DD/MM/YYYY" },
+            age: { type: Type.NUMBER },
+            mobile_number: { type: Type.STRING },
+            sex: { type: Type.STRING },
+            expiry_date: { type: Type.STRING },
+            institution_name: { type: Type.STRING }
+          }
         }
-      }
-    },
+      },
+    });
+    return JSON.parse(response.text?.trim() || "null");
   });
-  return JSON.parse(response.text?.trim() || "null");
 }
 
 export async function generateCampaignPoster(prompt: string): Promise<string | null> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  try {
+  return executeWithRetry(async () => {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
-      contents: { parts: [{ text: `Medical poster: ${prompt}` }] },
+      contents: [{
+        parts: [{ text: `High-quality clinical medical campaign poster: ${prompt}` }]
+      }],
       config: { imageConfig: { aspectRatio: "1:1" } }
     });
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
     }
     return null;
-  } catch (error) { return null; }
+  });
 }
